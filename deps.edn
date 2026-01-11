@@ -1,6 +1,7 @@
 {:paths ["src/clj" "resources"]
 
- :deps {org.clojure/clojure {:mvn/version "1.12.0"}}
+ :deps {org.clojure/clojure {:mvn/version "1.12.0"}
+        metosin/malli {:mvn/version "0.16.4"}}
 
  :aliases
  {:dev

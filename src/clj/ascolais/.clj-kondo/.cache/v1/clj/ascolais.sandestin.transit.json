@@ -1,1 +1,0 @@
-["^ ","~$greet",["^ ","~:row",3,"~:col",1,"~:fixed-arities",["~#set",[1]],"~:name","^0","~:ns","~$ascolais.sandestin","~:top-ns","^7","~:arities",["^ ","~i1",["^ ","~:ret","~:string","~:arglist-str","[name]"]],"~:type","~:fn"],"~:filename","/Users/brian/projects/sandestin/src/clj/ascolais/sandestin.clj"]

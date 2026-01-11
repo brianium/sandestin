@@ -77,9 +77,55 @@ Or from the REPL:
 (run-tests 'ascolais.sandestin-test)
 ```
 
+## Adding Dependencies
+
+When adding new dependencies in a REPL-connected environment:
+
+1. **Add to the running REPL first** using `clojure.repl.deps/add-lib`:
+   ```clojure
+   (clojure.repl.deps/add-lib 'metosin/malli {:mvn/version "0.16.4"})
+   ```
+   Note: The library name must be quoted.
+
+2. **Confirm the dependency works** by requiring and testing it in the REPL.
+
+3. **Only then add to deps.edn** once confirmed working.
+
+This ensures dependencies are immediately available without restarting the REPL.
+
 ## Code Style
 
 - Follow standard Clojure conventions
 - Use `cljfmt` formatting (applied automatically via hooks)
 - Prefer pure functions where possible
 - Use `tap>` for debugging output (appears in Portal)
+
+## Git Commits
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer]
+```
+
+**Types:**
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation only
+- `style`: Formatting, no code change
+- `refactor`: Code restructuring without feature/fix
+- `test`: Adding or updating tests
+- `chore`: Maintenance, dependencies, tooling
+
+**Examples:**
+```
+feat: add effect dispatch with registry merging
+feat(dispatch): implement async continuation support
+fix(registry): handle nil values in merge
+docs: update CLAUDE.md with commit guidelines
+test: add error handling tests for dispatch
+```
