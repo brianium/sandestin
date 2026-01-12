@@ -7,6 +7,29 @@ description: Create new Sandestin effect registries following project convention
 
 Create effect registries for Sandestin projects.
 
+## About Sandestin
+
+Sandestin is a Clojure effect dispatch library with schema-driven discoverability. Registries define effects, actions, and placeholders that can be composed and dispatched.
+
+**GitHub:** https://github.com/brianium/sandestin
+
+### Check if Installed
+
+Look for the dependency in `deps.edn`:
+
+```clojure
+io.github.brianium/sandestin {:git/tag "v0.1.0" :git/sha "cfe9c24"}
+```
+
+### Install if Missing
+
+Add to `deps.edn` under `:deps`:
+
+```clojure
+{:deps
+ {io.github.brianium/sandestin {:git/tag "v0.1.0" :git/sha "cfe9c24"}}}
+```
+
 ## Workflow
 
 ### 1. Check for Existing Patterns

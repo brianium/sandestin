@@ -7,6 +7,29 @@ description: Discover available effects, actions, and placeholders in a Sandesti
 
 Discover and understand available effects, actions, and placeholders.
 
+## About Sandestin
+
+Sandestin is a Clojure effect dispatch library with schema-driven discoverability. Effects are dispatched as vectors like `[:myapp/save-user {:name "Alice"}]`.
+
+**GitHub:** https://github.com/brianium/sandestin
+
+### Check if Installed
+
+Look for the dependency in `deps.edn`:
+
+```clojure
+io.github.brianium/sandestin {:git/tag "v0.1.0" :git/sha "cfe9c24"}
+```
+
+### Install if Missing
+
+Add to `deps.edn` under `:deps`:
+
+```clojure
+{:deps
+ {io.github.brianium/sandestin {:git/tag "v0.1.0" :git/sha "cfe9c24"}}}
+```
+
 ## Workflow
 
 ### 1. Find the Dispatch
