@@ -907,3 +907,46 @@
 
   (testing "EffectsVector schema is accessible"
     (is (= [:vector s/EffectVector] s/EffectsVector))))
+
+;; =============================================================================
+;; Phase 5: System Schema Tests
+;; =============================================================================
+
+(deftest system-schema-test
+  (testing "system-schema returns merged schema from registries"
+    (let [db-registry {::s/effects
+                       {:db/execute {::s/handler (fn [_ _ _] :done)}}
+                       ::s/system-schema
+                       {:datasource [:map [:uri :string]]}}
+          auth-registry {::s/effects
+                         {:auth/check {::s/handler (fn [_ _ _] :done)}}
+                         ::s/system-schema
+                         {:jwt-secret :string}}
+          dispatch (s/create-dispatch [db-registry auth-registry])
+          sys-schema (s/system-schema dispatch)]
+      (is (map? sys-schema))
+      (is (= [:map [:uri :string]] (:datasource sys-schema)))
+      (is (= :string (:jwt-secret sys-schema)))))
+
+  (testing "system-schema returns nil when no schema declared"
+    (let [registry {::s/effects
+                    {::noop {::s/handler (fn [_ _] :done)}}}
+          dispatch (s/create-dispatch [registry])]
+      (is (nil? (s/system-schema dispatch)))))
+
+  (testing "later registry overwrites conflicting system-schema keys"
+    (let [registry-a {::s/system-schema {:db [:map [:v1 :string]]}}
+          registry-b {::s/system-schema {:db [:map [:v2 :int]]}}
+          dispatch (s/create-dispatch [registry-a registry-b])
+          sys-schema (s/system-schema dispatch)]
+      ;; Later registry wins
+      (is (= [:map [:v2 :int]] (:db sys-schema)))))
+
+  (testing "system-keys on effects are included in describe"
+    (let [registry {::s/effects
+                    {:db/query {::s/description "Query database"
+                                ::s/system-keys [:datasource :cache]
+                                ::s/handler (fn [_ _ _] :done)}}}
+          dispatch (s/create-dispatch [registry])
+          desc (s/describe dispatch :db/query)]
+      (is (= [:datasource :cache] (::s/system-keys desc))))))

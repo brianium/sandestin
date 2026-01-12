@@ -6,7 +6,8 @@
    - describe: Describe registered effects, actions, placeholders
    - sample: Generate sample effects using Malli
    - grep: Search registered items by pattern
-   - schemas: Get all schemas as a map"
+   - schemas: Get all schemas as a map
+   - system-schema: Get merged system schema requirements"
   (:require [ascolais.sandestin.registry :as registry]
             [ascolais.sandestin.dispatch :as dispatch]
             [ascolais.sandestin.describe :as describe]))
@@ -120,3 +121,13 @@
    Useful for building composite schemas."
   [dispatch]
   (describe/schemas dispatch))
+
+(defn system-schema
+  "Return the merged system schema.
+
+   (system-schema dispatch)  ;; => {:db DataSourceSchema, :config ConfigSchema}
+
+   Returns a map of system keys to their Malli schemas, merged from all
+   registries. Use this to validate the system map or document requirements."
+  [dispatch]
+  (describe/system-schema dispatch))

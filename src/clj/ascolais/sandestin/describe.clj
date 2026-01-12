@@ -145,3 +145,13 @@
      (into {} (for [[k reg] (:ascolais.sandestin/placeholders registry)
                     :when (:ascolais.sandestin/schema reg)]
                 [k (:ascolais.sandestin/schema reg)])))))
+
+(defn system-schema
+  "Return the merged system schema.
+
+   (system-schema dispatch)  ;; => {:db DataSourceSchema, :config ConfigSchema}
+
+   Returns a map of system keys to their Malli schemas, merged from all
+   registries. Use this to validate the system map or document requirements."
+  [dispatch]
+  (:ascolais.sandestin/system-schema (:registry dispatch)))
