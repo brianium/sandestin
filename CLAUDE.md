@@ -57,11 +57,22 @@ clj-nrepl-eval --discover-ports          # Find running REPLs
 clj-nrepl-eval -p <PORT> "(+ 1 2 3)"     # Evaluate expression
 ```
 
-Always use `:reload` when requiring namespaces to pick up changes:
+### Reloading Code
 
-```bash
-clj-nrepl-eval -p <PORT> "(require '[ascolais.sandestin] :reload)"
-```
+**The workflow is two steps:**
+
+1. **First, reload changed namespaces** using `(dev/reload)`:
+   ```bash
+   clj-nrepl-eval -p <PORT> "(dev/reload)"
+   ```
+
+2. **Then, require and test** in follow-up evaluations (no `:reload` flags needed):
+   ```bash
+   clj-nrepl-eval -p <PORT> "(require '[ascolais.sandestin :as s])"
+   clj-nrepl-eval -p <PORT> "(s/describe dispatch)"
+   ```
+
+**Important:** Do NOT use `:reload` or `:reload-all` flags on require. The `(dev/reload)` handles namespace reloading properly via clj-reload. Plain requires after reload will pick up the fresh code.
 
 ## Running Tests
 

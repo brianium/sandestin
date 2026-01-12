@@ -3,11 +3,13 @@
 
    Core API:
    - create-dispatch: Create a dispatch function from registries
-   - describe: Describe registered effects (Phase 4)
-   - sample: Generate sample effects (Phase 4)
-   - grep: Search effects (Phase 4)"
+   - describe: Describe registered effects, actions, placeholders
+   - sample: Generate sample effects using Malli
+   - grep: Search registered items by pattern
+   - schemas: Get all schemas as a map"
   (:require [ascolais.sandestin.registry :as registry]
-            [ascolais.sandestin.dispatch :as dispatch]))
+            [ascolais.sandestin.dispatch :as dispatch]
+            [ascolais.sandestin.describe :as describe]))
 
 ;; =============================================================================
 ;; Schema Constants
@@ -63,7 +65,7 @@
     (->Dispatch merged)))
 
 ;; =============================================================================
-;; Discoverability (Phase 4 - stubs for now)
+;; Discoverability
 ;; =============================================================================
 
 (defn describe
@@ -72,37 +74,43 @@
    (describe dispatch)              ;; all items
    (describe dispatch ::some/key)   ;; specific item by key
    (describe dispatch :effects)     ;; all effects
+   (describe dispatch :actions)     ;; all actions
+   (describe dispatch :placeholders) ;; all placeholders
 
-   Returns a map or sequence of maps with metadata about registered items."
+   Returns a map (for single item) or sequence of maps with:
+   - :ascolais.sandestin/key - the registered keyword
+   - :ascolais.sandestin/type - :effect, :action, or :placeholder
+   - :ascolais.sandestin/description - human-readable description
+   - :ascolais.sandestin/schema - Malli schema
+   - :ascolais.sandestin/system-keys - system dependencies (if declared)
+   - Plus any user-defined metadata"
   ([dispatch]
-   (describe dispatch :all))
+   (describe/describe dispatch))
   ([dispatch key-or-type]
-   ;; TODO: Implement in Phase 4
-   (throw (ex-info "describe not yet implemented (Phase 4)" {}))))
+   (describe/describe dispatch key-or-type)))
 
 (defn sample
-  "Generate sample effect vectors using Malli's generation.
+  "Generate sample effect/action/placeholder vectors using Malli's generation.
 
    (sample dispatch ::db/execute)     ;; one sample
    (sample dispatch ::db/execute 5)   ;; five samples
 
-   Returns vectors that conform to the registered schema."
+   Returns a vector (or sequence of vectors) that conform to the schema.
+   Returns nil if no schema is defined or generation fails."
   ([dispatch key]
-   (sample dispatch key 1))
+   (describe/sample dispatch key))
   ([dispatch key n]
-   ;; TODO: Implement in Phase 4
-   (throw (ex-info "sample not yet implemented (Phase 4)" {}))))
+   (describe/sample dispatch key n)))
 
 (defn grep
   "Search registered items by pattern.
 
-   (grep dispatch \"database\")       ;; search descriptions
+   (grep dispatch \"database\")       ;; search descriptions and keys
    (grep dispatch #\"execute.*\")     ;; regex on keys and descriptions
 
    Returns sequence of matching item descriptions."
   [dispatch pattern]
-  ;; TODO: Implement in Phase 4
-  (throw (ex-info "grep not yet implemented (Phase 4)" {})))
+  (describe/grep dispatch pattern))
 
 (defn schemas
   "Return a map of all schemas.
@@ -111,5 +119,4 @@
 
    Useful for building composite schemas."
   [dispatch]
-  ;; TODO: Implement in Phase 4
-  (throw (ex-info "schemas not yet implemented (Phase 4)" {})))
+  (describe/schemas dispatch))

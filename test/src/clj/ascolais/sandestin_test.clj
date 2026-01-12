@@ -752,3 +752,158 @@
       ;; The interceptor error should be collected
       (is (= 1 (count errors)))
       (is (= ::bad-interceptor (:interceptor-id (first errors)))))))
+
+;; =============================================================================
+;; Phase 4: Discoverability Tests
+;; =============================================================================
+
+(def discoverability-registry
+  "Registry with various items for testing discoverability."
+  {::s/effects
+   {:myapp/log
+    {::s/description "Log a message to stdout"
+     ::s/schema [:tuple [:= :myapp/log] :string]
+     ::s/handler (fn [_ctx _sys msg] (println msg))}
+
+    :myapp/save
+    {::s/description "Save data to the database"
+     ::s/schema [:tuple [:= :myapp/save] :map]
+     ::s/system-keys [:db]
+     ::s/handler (fn [_ctx _sys data] {:saved data})
+     ;; User-defined metadata
+     :deprecated true}}
+
+   ::s/actions
+   {:myapp/greet
+    {::s/description "Greet a user by name"
+     ::s/schema [:tuple [:= :myapp/greet] :string]
+     ::s/handler (fn [_state name]
+                   [[:myapp/log (str "Hello, " name "!")]])}}
+
+   ::s/placeholders
+   {:myapp/user-id
+    {::s/description "Current user ID from dispatch context"
+     ::s/schema :int
+     ::s/handler (fn [dd] (:user-id dd))}}})
+
+(deftest describe-all-test
+  (testing "describe returns all items"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          items (s/describe dispatch)]
+      (is (= 4 (count items)))
+      ;; Check we have all types
+      (is (= #{:effect :action :placeholder}
+             (set (map ::s/type items)))))))
+
+(deftest describe-by-type-test
+  (testing "describe :effects returns only effects"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          items (s/describe dispatch :effects)]
+      (is (= 2 (count items)))
+      (is (every? #(= :effect (::s/type %)) items))))
+
+  (testing "describe :actions returns only actions"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          items (s/describe dispatch :actions)]
+      (is (= 1 (count items)))
+      (is (= :action (::s/type (first items))))))
+
+  (testing "describe :placeholders returns only placeholders"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          items (s/describe dispatch :placeholders)]
+      (is (= 1 (count items)))
+      (is (= :placeholder (::s/type (first items)))))))
+
+(deftest describe-by-key-test
+  (testing "describe with specific key returns single item"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          item (s/describe dispatch :myapp/save)]
+      (is (map? item))
+      (is (= :myapp/save (::s/key item)))
+      (is (= :effect (::s/type item)))
+      (is (= "Save data to the database" (::s/description item)))
+      (is (= [:tuple [:= :myapp/save] :map] (::s/schema item)))
+      (is (= [:db] (::s/system-keys item)))
+      ;; User-defined metadata should be included
+      (is (true? (:deprecated item)))))
+
+  (testing "describe with unknown key returns nil"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          item (s/describe dispatch :unknown/key)]
+      (is (nil? item)))))
+
+(deftest sample-test
+  (testing "sample generates single sample from schema"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          sample (s/sample dispatch :myapp/log)]
+      (is (vector? sample))
+      (is (= :myapp/log (first sample)))
+      (is (string? (second sample)))))
+
+  (testing "sample generates multiple samples"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          samples (s/sample dispatch :myapp/log 3)]
+      (is (seq? samples))
+      (is (= 3 (count samples)))
+      (is (every? #(= :myapp/log (first %)) samples))))
+
+  (testing "sample returns nil for item without schema"
+    (let [registry {::s/effects
+                    {::no-schema {::s/handler (fn [_ _] :done)}}}
+          dispatch (s/create-dispatch [registry])
+          sample (s/sample dispatch ::no-schema)]
+      (is (nil? sample)))))
+
+(deftest grep-test
+  (testing "grep finds items by description (case-insensitive)"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          results (s/grep dispatch "database")]
+      (is (= 1 (count results)))
+      (is (= :myapp/save (::s/key (first results))))))
+
+  (testing "grep finds items by key"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          results (s/grep dispatch "greet")]
+      (is (= 1 (count results)))
+      (is (= :myapp/greet (::s/key (first results))))))
+
+  (testing "grep with regex pattern"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          results (s/grep dispatch #"log|greet")]
+      (is (= 2 (count results)))
+      (is (= #{:myapp/log :myapp/greet}
+             (set (map ::s/key results))))))
+
+  (testing "grep returns empty for no matches"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          results (s/grep dispatch "nonexistent")]
+      (is (empty? results)))))
+
+(deftest schemas-test
+  (testing "schemas returns map of all schemas"
+    (let [dispatch (s/create-dispatch [discoverability-registry])
+          schema-map (s/schemas dispatch)]
+      (is (map? schema-map))
+      (is (= 4 (count schema-map)))
+      (is (= [:tuple [:= :myapp/log] :string] (get schema-map :myapp/log)))
+      (is (= [:tuple [:= :myapp/save] :map] (get schema-map :myapp/save)))
+      (is (= [:tuple [:= :myapp/greet] :string] (get schema-map :myapp/greet)))
+      (is (= :int (get schema-map :myapp/user-id)))))
+
+  (testing "schemas omits items without schemas"
+    (let [registry {::s/effects
+                    {::with-schema {::s/schema [:tuple [:= ::with-schema]]
+                                    ::s/handler (fn [_ _] :done)}
+                     ::without-schema {::s/handler (fn [_ _] :done)}}}
+          dispatch (s/create-dispatch [registry])
+          schema-map (s/schemas dispatch)]
+      (is (= 1 (count schema-map)))
+      (is (contains? schema-map ::with-schema))
+      (is (not (contains? schema-map ::without-schema))))))
+
+(deftest schema-constants-test
+  (testing "EffectVector schema is accessible"
+    (is (= [:vector [:cat :qualified-keyword [:* :any]]] s/EffectVector)))
+
+  (testing "EffectsVector schema is accessible"
+    (is (= [:vector s/EffectVector] s/EffectsVector))))
