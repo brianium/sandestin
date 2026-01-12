@@ -1,7 +1,8 @@
 (ns ascolais.sandestin-test
   (:require [clojure.test :refer [deftest is testing]]
             [ascolais.sandestin :as s]
-            [ascolais.sandestin.registry :as registry]))
+            [ascolais.sandestin.registry :as registry]
+            [ascolais.sandestin.placeholders :as placeholders]))
 
 ;; =============================================================================
 ;; Test Fixtures - Example Registries
@@ -196,8 +197,10 @@
     (let [dispatch (s/create-dispatch [simple-registry])
           {:keys [errors]} (dispatch {} {} [[::unknown-effect "arg"]])]
       (is (= 1 (count errors)))
+      ;; Error now comes from action expansion phase
+      (is (= :expand-action (:phase (first errors))))
       (is (= ::unknown-effect
-             (first (:effect (first errors))))))))
+             (first (:action (first errors))))))))
 
 ;; =============================================================================
 ;; Async Continuation Tests
@@ -250,3 +253,213 @@
     (let [dispatch (s/create-dispatch [simple-registry])
           {:keys [results]} (dispatch {:sys :tem} {:dd :ata} [[::log "three-args"]])]
       (is (= 1 (count results))))))
+
+;; =============================================================================
+;; Phase 2: Placeholder Tests
+;; =============================================================================
+
+(def placeholder-registry
+  "Registry with placeholders for testing."
+  {::s/effects
+   {::greet
+    {::s/description "Greet someone"
+     ::s/handler (fn [_ctx _system name]
+                   (str "Hello, " name "!"))}}
+
+   ::s/placeholders
+   {::user-name
+    {::s/description "Get user name from dispatch-data"
+     ::s/handler (fn [dispatch-data]
+                   (:user-name dispatch-data))}
+
+    ::upper
+    {::s/description "Uppercase a value"
+     ::s/handler (fn [dispatch-data value]
+                   (clojure.string/upper-case value))}
+
+    ::get-in-data
+    {::s/description "Get nested value from dispatch-data"
+     ::s/handler (fn [dispatch-data & path]
+                   (get-in dispatch-data (vec path)))}}})
+
+(deftest placeholder-interpolation-test
+  (testing "basic placeholder resolution"
+    (let [placeholders-map (::s/placeholders placeholder-registry)
+          dispatch-data {:user-name "Alice"}
+          result (placeholders/interpolate
+                  placeholders-map dispatch-data
+                  [::user-name])]
+      (is (= "Alice" result))))
+
+  (testing "placeholder in effect vector"
+    (let [dispatch (s/create-dispatch [placeholder-registry])
+          {:keys [results errors]} (dispatch {} {:user-name "Bob"}
+                                             [[::greet [::user-name]]])]
+      (is (empty? errors))
+      (is (= "Hello, Bob!" (:res (first results))))))
+
+  (testing "placeholder with arguments"
+    (let [placeholders-map (::s/placeholders placeholder-registry)
+          result (placeholders/interpolate
+                  placeholders-map {:user-name "alice"}
+                  [::upper "hello"])]
+      (is (= "HELLO" result))))
+
+  (testing "nested placeholder resolution"
+    (let [placeholders-map (::s/placeholders placeholder-registry)
+          dispatch-data {:user-name "alice"}
+          ;; [::upper [::user-name]] should resolve to "ALICE"
+          result (placeholders/interpolate
+                  placeholders-map dispatch-data
+                  [::upper [::user-name]])]
+      (is (= "ALICE" result))))
+
+  (testing "placeholder in nested data structure"
+    (let [placeholders-map (::s/placeholders placeholder-registry)
+          dispatch-data {:request {:user {:name "Charlie"}}}
+          result (placeholders/interpolate
+                  placeholders-map dispatch-data
+                  {:greeting [::get-in-data :request :user :name]})]
+      (is (= {:greeting "Charlie"} result))))
+
+  (testing "unknown placeholder passes through"
+    (let [placeholders-map (::s/placeholders placeholder-registry)
+          result (placeholders/interpolate
+                  placeholders-map {}
+                  [::unknown-placeholder "arg"])]
+      ;; Unknown placeholders are left as-is
+      (is (= [::unknown-placeholder "arg"] result)))))
+
+;; =============================================================================
+;; Phase 2: Action Tests
+;; =============================================================================
+
+(def action-registry
+  "Registry with actions for testing."
+  {::s/effects
+   {::log
+    {::s/description "Log a message"
+     ::s/handler (fn [_ctx _system msg]
+                   {:logged msg})}
+
+    ::save
+    {::s/description "Save data"
+     ::s/handler (fn [_ctx _system key value]
+                   {:saved {key value}})}}
+
+   ::s/actions
+   {::log-and-save
+    {::s/description "Log and save in one action"
+     ::s/handler (fn [_state msg key value]
+                   [[::log msg]
+                    [::save key value]])}
+
+    ::increment-and-log
+    {::s/description "Increment counter in state and log"
+     ::s/handler (fn [state n]
+                   (let [new-val (+ (:counter state 0) n)]
+                     [[::log (str "Counter is now: " new-val)]
+                      [::save :counter new-val]]))}
+
+    ::nested-action
+    {::s/description "Action that returns another action"
+     ::s/handler (fn [_state msg]
+                   [[::log-and-save msg :from "nested"]])}}
+
+   ::s/system->state
+   (fn [system]
+     (:state system))})
+
+(deftest action-expansion-test
+  (testing "action expands to effects"
+    (let [dispatch (s/create-dispatch [action-registry])
+          {:keys [results errors]} (dispatch {} {}
+                                             [[::log-and-save "hello" :key "value"]])]
+      (is (empty? errors))
+      (is (= 2 (count results)))
+      (is (= {:logged "hello"} (:res (first results))))
+      (is (= {:saved {:key "value"}} (:res (second results))))))
+
+  (testing "action receives state from system->state"
+    (let [dispatch (s/create-dispatch [action-registry])
+          system {:state {:counter 10}}
+          {:keys [results errors]} (dispatch system {}
+                                             [[::increment-and-log 5]])]
+      (is (empty? errors))
+      (is (= 2 (count results)))
+      (is (= {:logged "Counter is now: 15"} (:res (first results))))))
+
+  (testing "nested actions expand recursively"
+    (let [dispatch (s/create-dispatch [action-registry])
+          {:keys [results errors]} (dispatch {} {}
+                                             [[::nested-action "from-outer"]])]
+      (is (empty? errors))
+      ;; nested-action -> log-and-save -> [::log ::save]
+      (is (= 2 (count results)))
+      (is (= {:logged "from-outer"} (:res (first results))))))
+
+  (testing "mixed actions and effects"
+    (let [dispatch (s/create-dispatch [action-registry])
+          {:keys [results errors]} (dispatch {} {}
+                                             [[::log "direct"]
+                                              [::log-and-save "from-action" :k "v"]
+                                              [::log "after"]])]
+      (is (empty? errors))
+      (is (= 4 (count results)))
+      (is (= [{:logged "direct"}
+              {:logged "from-action"}
+              {:saved {:k "v"}}
+              {:logged "after"}]
+             (mapv :res results)))))
+
+  (testing "unknown action produces error"
+    (let [dispatch (s/create-dispatch [action-registry])
+          {:keys [errors]} (dispatch {} {} [[::unknown-action "arg"]])]
+      (is (= 1 (count errors)))
+      (is (= :expand-action (:phase (first errors)))))))
+
+;; =============================================================================
+;; Phase 2: Combined Placeholders and Actions Tests
+;; =============================================================================
+
+(def combined-registry
+  "Registry combining placeholders and actions."
+  {::s/effects
+   {::greet
+    {::s/handler (fn [_ctx _system name]
+                   (str "Hello, " name "!"))}}
+
+   ::s/actions
+   {::greet-user
+    {::s/handler (fn [state]
+                   [[::greet (:current-user state)]])}}
+
+   ::s/placeholders
+   {::user
+    {::s/handler (fn [dd] (:user dd))}}
+
+   ::s/system->state
+   (fn [system] (:state system))})
+
+(deftest combined-placeholders-actions-test
+  (testing "placeholder resolved before action expansion"
+    (let [registry {::s/effects
+                    {::log {::s/handler (fn [_ _ msg] {:logged msg})}}
+                    ::s/actions
+                    {::log-user {::s/handler (fn [_state user]
+                                               [[::log user]])}}
+                    ::s/placeholders
+                    {::user {::s/handler (fn [dd] (:user dd))}}}
+          dispatch (s/create-dispatch [registry])
+          {:keys [results errors]} (dispatch {} {:user "PlaceholderUser"}
+                                             [[::log-user [::user]]])]
+      (is (empty? errors))
+      (is (= {:logged "PlaceholderUser"} (:res (first results))))))
+
+  (testing "action uses state, effect uses placeholder result"
+    (let [dispatch (s/create-dispatch [combined-registry])
+          system {:state {:current-user "StateUser"}}
+          {:keys [results errors]} (dispatch system {}
+                                             [[::greet-user]])]
+      (is (empty? errors))
+      (is (= "Hello, StateUser!" (:res (first results)))))))

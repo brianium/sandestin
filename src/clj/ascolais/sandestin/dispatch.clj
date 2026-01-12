@@ -1,7 +1,19 @@
 (ns ascolais.sandestin.dispatch
   "Core dispatch implementation for Sandestin.
 
-   Phase 1: Effects only (no actions, placeholders, or interceptors).")
+   Dispatch flow:
+   1. Interpolate placeholders in input
+   2. Expand actions to effects
+   3. Execute effects"
+  (:require [ascolais.sandestin.placeholders :as placeholders]
+            [ascolais.sandestin.actions :as actions]))
+
+(def ^:private max-action-depth
+  "Maximum depth for action expansion to prevent infinite loops."
+  100)
+
+;; Forward declaration for mutual recursion
+(declare dispatch)
 
 (defn- execute-effect
   "Execute a single effect and return a result map.
@@ -31,13 +43,14 @@
    Returns {:results [...] :errors [...]}."
   [registry system dispatch-data effects]
   (let [;; Create dispatch function for async continuation
-        dispatch-fn (fn dispatch
+        ;; This goes through the full dispatch flow (interpolate -> expand -> execute)
+        dispatch-fn (fn dispatch-continuation
                       ([fx]
-                       (dispatch {} fx))
+                       (dispatch-continuation {} fx))
                       ([extra-dispatch-data fx]
-                       (execute-effects registry system
-                                        (merge dispatch-data extra-dispatch-data)
-                                        fx)))
+                       (dispatch registry system
+                                 (merge dispatch-data extra-dispatch-data)
+                                 fx)))
         ;; Build context for effect handlers
         ctx {:dispatch dispatch-fn
              :dispatch-data dispatch-data
@@ -57,14 +70,36 @@
      effects)))
 
 (defn dispatch
-  "Dispatch effects using the given registry.
+  "Dispatch actions/effects using the given registry.
+
+   Flow:
+   1. Interpolate placeholders in the input
+   2. Expand actions to effects (recursively)
+   3. Execute effects
 
    Arguments:
    - registry: A merged registry map
    - system: The live system (passed to effect handlers)
    - dispatch-data: Data available to handlers and placeholders
-   - effects: A vector of effect vectors
+   - actions-or-effects: A vector of action/effect vectors
 
    Returns {:results [...] :errors [...]}"
-  [registry system dispatch-data effects]
-  (execute-effects registry system dispatch-data effects))
+  [registry system dispatch-data actions-or-effects]
+  (let [;; Get placeholders map for interpolation
+        placeholders-map (:ascolais.sandestin/placeholders registry)
+
+        ;; Step 1: Interpolate placeholders
+        interpolated (if (seq placeholders-map)
+                       (placeholders/interpolate-effects
+                        placeholders-map dispatch-data actions-or-effects)
+                       actions-or-effects)
+
+        ;; Step 2: Expand actions to effects
+        state (actions/get-state registry system)
+        {:keys [effects errors]} (actions/expand-actions
+                                  registry state interpolated max-action-depth)]
+
+    ;; Step 3: Execute effects (accumulating any expansion errors)
+    (let [exec-result (execute-effects registry system dispatch-data effects)]
+      {:results (:results exec-result)
+       :errors (into errors (:errors exec-result))})))
