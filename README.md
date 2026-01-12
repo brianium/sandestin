@@ -284,6 +284,20 @@ clj -M:dev
 clj -X:test
 ```
 
+## Claude Code Skills
+
+Sandestin ships with Claude Code skills for LLM-assisted development:
+
+- **`/fx-explore`** - Discover available effects, actions, and placeholders via REPL
+- **`/fx-registry`** - Create new registries following project conventions
+
+Install by copying to your skills directory:
+
+```bash
+cp -r .claude/skills/fx-explore ~/.claude/skills/
+cp -r .claude/skills/fx-registry ~/.claude/skills/
+```
+
 ## License
 
 Copyright 2025 Brian Scaturro
