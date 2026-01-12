@@ -463,3 +463,113 @@
                                              [[::greet-user]])]
       (is (empty? errors))
       (is (= "Hello, StateUser!" (:res (first results)))))))
+
+;; =============================================================================
+;; Nested Continuation with Placeholder Tests
+;; =============================================================================
+
+(deftest nested-continuation-placeholder-test
+  (testing "placeholder in depth-3 continuation accesses depth-2 dispatch-data"
+    (let [captured (atom [])
+          registry {::s/effects
+                    {::level1
+                     {::s/handler
+                      (fn [{:keys [dispatch]} _system continuation]
+                        (swap! captured conj {:level 1 :action "dispatching level2"})
+                        (dispatch {:from-level1 "data-from-1"}
+                                  continuation)
+                        :level1-done)}
+
+                     ::level2
+                     {::s/handler
+                      (fn [{:keys [dispatch dispatch-data]} _system continuation]
+                        (swap! captured conj {:level 2
+                                              :received (:from-level1 dispatch-data)})
+                        (dispatch {:from-level2 "data-from-2"}
+                                  continuation)
+                        :level2-done)}
+
+                     ::level3
+                     {::s/handler
+                      (fn [{:keys [dispatch-data]} _system]
+                        (swap! captured conj {:level 3
+                                              :from-level1 (:from-level1 dispatch-data)
+                                              :from-level2 (:from-level2 dispatch-data)})
+                        :level3-done)}}
+
+                    ::s/placeholders
+                    {::from-level2
+                     {::s/handler (fn [dd] (:from-level2 dd))}}}
+
+          dispatch (s/create-dispatch [registry])
+
+          ;; Dispatch chain: level1 -> level2 -> level3 with placeholder
+          {:keys [results errors]}
+          (dispatch {} {:initial "data"}
+                    [[::level1
+                      [[::level2
+                        [[::level3]]]]]])]
+
+      (is (empty? errors))
+
+      ;; Verify the captured data shows proper dispatch-data propagation
+      (is (= 3 (count @captured)))
+      (is (= "data-from-1" (:received (second @captured))))
+      (is (= "data-from-1" (:from-level1 (nth @captured 2))))
+      (is (= "data-from-2" (:from-level2 (nth @captured 2))))))
+
+  (testing "placeholder resolves with dispatch-data from parent effect"
+    (let [captured (atom nil)
+          registry {::s/effects
+                    {::fetch
+                     {::s/handler
+                      (fn [{:keys [dispatch]} _system result-fx]
+                        ;; Simulate fetching data and dispatching continuation
+                        (dispatch {:fetch-result {:id 42 :name "Alice"}}
+                                  result-fx)
+                        :fetch-started)}
+
+                     ::process
+                     {::s/handler
+                      (fn [{:keys [dispatch]} _system data result-fx]
+                        ;; Process the data and dispatch next continuation
+                        (dispatch {:processed-data (str "Processed: " data)}
+                                  result-fx)
+                        :process-started)}
+
+                     ::finalize
+                     {::s/handler
+                      (fn [_ctx _system final-data]
+                        (reset! captured final-data)
+                        :done)}}
+
+                    ::s/placeholders
+                    {::fetch-result
+                     {::s/handler (fn [dd]
+                                    ;; Self-preserve if data not available yet
+                                    (or (:fetch-result dd) [::fetch-result]))}
+
+                     ::fetch-name
+                     {::s/handler (fn [dd]
+                                    ;; Self-preserve if data not available yet
+                                    (if-let [result (:fetch-result dd)]
+                                      (:name result)
+                                      [::fetch-name]))}
+
+                     ::processed
+                     {::s/handler (fn [dd]
+                                    ;; Self-preserve if data not available yet
+                                    (or (:processed-data dd) [::processed]))}}}
+
+          dispatch (s/create-dispatch [registry])
+
+          ;; Chain: fetch -> process (using fetch result) -> finalize (using processed)
+          {:keys [errors]}
+          (dispatch {} {}
+                    [[::fetch
+                      [[::process [::fetch-name]
+                        [[::finalize [::processed]]]]]]])]
+
+      (is (empty? errors))
+      ;; The final effect should receive "Processed: Alice"
+      (is (= "Processed: Alice" @captured)))))
