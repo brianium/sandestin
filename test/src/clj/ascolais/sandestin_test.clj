@@ -2,7 +2,8 @@
   (:require [clojure.test :refer [deftest is testing]]
             [ascolais.sandestin :as s]
             [ascolais.sandestin.registry :as registry]
-            [ascolais.sandestin.placeholders :as placeholders]))
+            [ascolais.sandestin.placeholders :as placeholders]
+            [ascolais.sandestin.interceptors :as interceptors]))
 
 ;; =============================================================================
 ;; Test Fixtures - Example Registries
@@ -573,3 +574,181 @@
       (is (empty? errors))
       ;; The final effect should receive "Processed: Alice"
       (is (= "Processed: Alice" @captured)))))
+
+;; =============================================================================
+;; Phase 3: Interceptor Tests
+;; =============================================================================
+
+(deftest interceptor-dispatch-lifecycle-test
+  (testing "before-dispatch and after-dispatch interceptors run"
+    (let [log (atom [])
+          interceptor {:id ::lifecycle-logger
+                       :before-dispatch
+                       (fn [ctx]
+                         (swap! log conj [:before-dispatch (:actions ctx)])
+                         ctx)
+                       :after-dispatch
+                       (fn [ctx]
+                         (swap! log conj [:after-dispatch (count (:results ctx))])
+                         ctx)}
+          registry {::s/effects
+                    {::noop {::s/handler (fn [_ _] :done)}}
+                    ::s/interceptors [interceptor]}
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::noop]])
+
+      (is (= 2 (count @log)))
+      (is (= :before-dispatch (first (first @log))))
+      (is (= :after-dispatch (first (second @log))))))
+
+  (testing "interceptors run in order (before) and reverse (after)"
+    (let [log (atom [])
+          make-interceptor (fn [id]
+                             {:id id
+                              :before-dispatch
+                              (fn [ctx]
+                                (swap! log conj [:before id])
+                                ctx)
+                              :after-dispatch
+                              (fn [ctx]
+                                (swap! log conj [:after id])
+                                ctx)})
+          registry {::s/effects
+                    {::noop {::s/handler (fn [_ _] :done)}}
+                    ::s/interceptors [(make-interceptor :a)
+                                      (make-interceptor :b)
+                                      (make-interceptor :c)]}
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::noop]])
+
+      ;; Before runs in order: a, b, c
+      ;; After runs in reverse: c, b, a
+      (is (= [[:before :a] [:before :b] [:before :c]
+              [:after :c] [:after :b] [:after :a]]
+             @log)))))
+
+(deftest interceptor-effect-lifecycle-test
+  (testing "before-effect and after-effect interceptors run for each effect"
+    (let [log (atom [])
+          interceptor {:id ::effect-logger
+                       :before-effect
+                       (fn [ctx]
+                         (swap! log conj [:before-effect (:effect ctx)])
+                         ctx)
+                       :after-effect
+                       (fn [ctx]
+                         (swap! log conj [:after-effect (:effect ctx)])
+                         ctx)}
+          registry {::s/effects
+                    {::fx1 {::s/handler (fn [_ _] :one)}
+                     ::fx2 {::s/handler (fn [_ _] :two)}}
+                    ::s/interceptors [interceptor]}
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::fx1] [::fx2]])
+
+      ;; Should have before/after for each effect
+      (is (= 4 (count @log)))
+      (is (= [::fx1] (second (nth @log 0))))  ;; before fx1
+      (is (= [::fx1] (second (nth @log 1))))  ;; after fx1
+      (is (= [::fx2] (second (nth @log 2))))  ;; before fx2
+      (is (= [::fx2] (second (nth @log 3)))))))  ;; after fx2
+
+(deftest interceptor-action-lifecycle-test
+  (testing "before-action and after-action interceptors run for each action"
+    (let [log (atom [])
+          interceptor {:id ::action-logger
+                       :before-action
+                       (fn [ctx]
+                         (swap! log conj [:before-action (:action ctx)])
+                         ctx)
+                       :after-action
+                       (fn [ctx]
+                         (swap! log conj [:after-action (:action ctx)])
+                         ctx)}
+          registry {::s/effects
+                    {::log {::s/handler (fn [_ _ msg] {:logged msg})}}
+                    ::s/actions
+                    {::greet {::s/handler (fn [_state name]
+                                            [[::log (str "Hello, " name)]])}}
+                    ::s/interceptors [interceptor]}
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::greet "World"]])
+
+      ;; Should have before/after for the action
+      (is (= 2 (count @log)))
+      (is (= [:before-action [::greet "World"]] (first @log)))
+      (is (= [:after-action [::greet "World"]] (second @log))))))
+
+(deftest interceptor-context-modification-test
+  (testing "interceptors can modify context"
+    (let [interceptor {:id ::context-modifier
+                       :before-dispatch
+                       (fn [ctx]
+                         (assoc ctx ::custom-data "injected"))
+                       :after-dispatch
+                       (fn [ctx]
+                         (update ctx :results conj {:injected (::custom-data ctx)}))}
+          registry {::s/effects
+                    {::noop {::s/handler (fn [_ _] :done)}}
+                    ::s/interceptors [interceptor]}
+          dispatch (s/create-dispatch [registry])
+          {:keys [results]} (dispatch {} {} [[::noop]])]
+
+      ;; After interceptor should have added the injected data
+      (is (= {:injected "injected"} (last results))))))
+
+(deftest fail-fast-interceptor-test
+  (testing "fail-fast stops on first error"
+    (let [log (atom [])
+          registry {::s/effects
+                    {::ok {::s/handler (fn [_ _ msg]
+                                         (swap! log conj msg)
+                                         :ok)}
+                     ::fail {::s/handler (fn [_ _]
+                                           (throw (ex-info "Boom!" {})))}}
+                    ::s/interceptors [interceptors/fail-fast]}
+          dispatch (s/create-dispatch [registry])
+          {:keys [results errors]} (dispatch {} {} [[::ok "first"]
+                                                    [::fail]
+                                                    [::ok "third"]])]
+
+      ;; Without fail-fast, "third" would run. With fail-fast, it shouldn't.
+      (is (= ["first"] @log))
+      (is (= 1 (count results)))
+      (is (= 1 (count errors)))))
+
+  (testing "fail-fast allows success when no errors"
+    (let [log (atom [])
+          registry {::s/effects
+                    {::ok {::s/handler (fn [_ _ msg]
+                                         (swap! log conj msg)
+                                         :ok)}}
+                    ::s/interceptors [interceptors/fail-fast]}
+          dispatch (s/create-dispatch [registry])
+          {:keys [results errors]} (dispatch {} {} [[::ok "first"]
+                                                    [::ok "second"]
+                                                    [::ok "third"]])]
+
+      (is (= ["first" "second" "third"] @log))
+      (is (= 3 (count results)))
+      (is (empty? errors)))))
+
+(deftest interceptor-error-handling-test
+  (testing "interceptor errors are collected"
+    (let [bad-interceptor {:id ::bad-interceptor
+                           :before-dispatch
+                           (fn [_ctx]
+                             (throw (ex-info "Interceptor error" {})))}
+          registry {::s/effects
+                    {::noop {::s/handler (fn [_ _] :done)}}
+                    ::s/interceptors [bad-interceptor]}
+          dispatch (s/create-dispatch [registry])
+          {:keys [errors]} (dispatch {} {} [[::noop]])]
+
+      ;; The interceptor error should be collected
+      (is (= 1 (count errors)))
+      (is (= ::bad-interceptor (:interceptor-id (first errors)))))))
