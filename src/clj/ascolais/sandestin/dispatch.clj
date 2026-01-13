@@ -154,44 +154,53 @@
          :errors (:errors after-ctx)}))))
 
 (defn- expand-actions-with-interceptors
-  "Recursively expand actions until only effects remain, with interceptors."
-  [registry interceptors state actions-or-effects max-depth]
-  (if (zero? max-depth)
-    {:effects []
-     :errors [{:phase :expand-action
-               :err (ex-info "Max action expansion depth reached" {})}]}
-    (reduce
-     (fn [{:keys [effects errors]} item]
-       (let [[item-key] item]
-         (cond
-           ;; It's an effect - pass through
-           (actions/effect? registry item-key)
-           {:effects (conj effects item)
-            :errors errors}
+  "Recursively expand actions until only effects remain, with interceptors.
+   Interpolates placeholders between each action expansion round."
+  [registry interceptors dispatch-data state actions-or-effects max-depth]
+  (let [placeholders-map (:ascolais.sandestin/placeholders registry)]
+    (if (zero? max-depth)
+      {:effects []
+       :errors [{:phase :expand-action
+                 :err (ex-info "Max action expansion depth reached" {})}]}
+      (reduce
+       (fn [{:keys [effects errors]} item]
+         (let [[item-key] item]
+           (cond
+             ;; It's an effect - pass through
+             (actions/effect? registry item-key)
+             {:effects (conj effects item)
+              :errors errors}
 
-           ;; It's an action - expand with interceptors
-           (actions/action? registry item-key)
-           (let [{:keys [expanded errors]}
-                 (expand-action-with-interceptors registry interceptors state item errors)]
-             (if (seq expanded)
-               ;; Recursively expand the result
-               (let [recursive-result
-                     (expand-actions-with-interceptors
-                      registry interceptors state expanded (dec max-depth))]
-                 {:effects (into effects (:effects recursive-result))
-                  :errors (into errors (:errors recursive-result))})
-               {:effects effects
-                :errors errors}))
+             ;; It's an action - expand with interceptors
+             (actions/action? registry item-key)
+             (let [{:keys [expanded errors]}
+                   (expand-action-with-interceptors registry interceptors state item errors)]
+               (if (seq expanded)
+                 ;; Interpolate placeholders after expansion (Nexus 2025.10.1 behavior)
+                 ;; This allows actions to introduce placeholders that get resolved
+                 (let [interpolated-expanded (if (seq placeholders-map)
+                                               (placeholders/interpolate
+                                                placeholders-map dispatch-data expanded)
+                                               expanded)
+                       ;; Recursively expand the result
+                       recursive-result
+                       (expand-actions-with-interceptors
+                        registry interceptors dispatch-data state
+                        interpolated-expanded (dec max-depth))]
+                   {:effects (into effects (:effects recursive-result))
+                    :errors (into errors (:errors recursive-result))})
+                 {:effects effects
+                  :errors errors}))
 
-           ;; Unknown - error
-           :else
-           {:effects effects
-            :errors (conj errors {:phase :expand-action
-                                  :action item
-                                  :err (ex-info "Unknown action or effect"
-                                                {:key item-key})})})))
-     {:effects [] :errors []}
-     actions-or-effects)))
+             ;; Unknown - error
+             :else
+             {:effects effects
+              :errors (conj errors {:phase :expand-action
+                                    :action item
+                                    :err (ex-info "Unknown action or effect"
+                                                  {:key item-key})})})))
+       {:effects [] :errors []}
+       actions-or-effects))))
 
 ;; =============================================================================
 ;; Main Dispatch
@@ -244,9 +253,10 @@
                            actions-or-effects)
 
             ;; Step 2: Expand actions to effects (with interceptors)
+            ;; Placeholders are also interpolated between each action expansion
             {:keys [effects errors]}
             (expand-actions-with-interceptors
-             registry interceptors state interpolated max-action-depth)
+             registry interceptors dispatch-data state interpolated max-action-depth)
 
             ;; Step 3: Execute effects (with interceptors)
             exec-result (execute-effects

@@ -122,6 +122,42 @@ grep -r "defn registry" src/
                 (:some-key dispatch-data))}}
 ```
 
+**Self-Preserving Placeholder** (for async continuations):
+
+When an effect dispatches continuation effects with new data, placeholders in those continuations must "self-preserve" — return themselves when the data isn't available yet, then resolve when re-interpolated with the actual data.
+
+```clojure
+{:<ns>/<result>
+ {::s/description "Result from async operation, self-preserving"
+  ::s/handler (fn [dispatch-data]
+                ;; Return self if data not yet available
+                (or (:<ns>/<result> dispatch-data)
+                    [:<ns>/<result>]))}}
+```
+
+Usage pattern:
+
+```clojure
+;; Effect that dispatches continuation with result
+{:<ns>/fetch
+ {::s/handler
+  (fn [{:keys [dispatch]} system url continuation-fx]
+    (let [result (http/get url)]
+      ;; Dispatch continuation with result in dispatch-data
+      (dispatch {:<ns>/result result} continuation-fx))
+    :fetch-started)}}
+
+;; Calling code - placeholder resolves in continuation dispatch
+(dispatch {} {}
+  [[:<ns>/fetch "http://api.example.com"
+    [[:<ns>/process [:<ns>/result]]]]])
+```
+
+Flow:
+1. Initial dispatch interpolates `[:<ns>/result]` → returns itself (no data yet)
+2. Effect runs, calls `dispatch` with `{:<ns>/result actual-data}`
+3. Continuation dispatch interpolates `[:<ns>/result]` → returns `actual-data`
+
 ### 4. Test via REPL
 
 ```clojure
@@ -154,3 +190,26 @@ grep -r "defn registry" src/
 | `::s/system-keys` | Declare system map dependencies |
 | `::s/system-schema` | Malli schemas for system keys |
 | `::s/system->state` | Extract immutable state for actions |
+
+## Placeholder Patterns
+
+| Pattern | When to Use |
+|---------|-------------|
+| Simple | Value available at dispatch time (e.g., DOM event data) |
+| Self-preserving | Value available later via continuation dispatch (e.g., async results) |
+| Transforming | Wraps another placeholder to transform its value |
+
+**Transforming placeholder example:**
+
+```clojure
+;; Extract field from async result
+{:<ns>/result-name
+ {::s/handler
+  (fn [dispatch-data]
+    ;; Check if result is available before transforming
+    (if-let [result (:<ns>/result dispatch-data)]
+      (:name result)
+      [:<ns>/result-name]))}}
+
+;; Usage: [:<ns>/result-name] instead of nesting
+```

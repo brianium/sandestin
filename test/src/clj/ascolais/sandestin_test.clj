@@ -576,6 +576,157 @@
       (is (= "Processed: Alice" @captured)))))
 
 ;; =============================================================================
+;; Placeholder Interpolation Timing Tests (Nexus 2025.10.1 behavior)
+;; =============================================================================
+
+(deftest placeholders-introduced-by-actions-test
+  (testing "placeholders introduced by action expansion are interpolated"
+    ;; This tests the "interpolate between action expansions" behavior
+    ;; from Nexus 2025.10.1 - actions can return effects with placeholders
+    ;; that reference values from the original dispatch-data
+    (let [captured (atom nil)
+          registry {::s/effects
+                    {::send-email
+                     {::s/handler
+                      (fn [_ctx _system email-opts]
+                        (reset! captured email-opts)
+                        :sent)}}
+
+                    ::s/actions
+                    {::send-welcome
+                     {::s/handler
+                      (fn [_state]
+                        ;; Action introduces a placeholder that should be
+                        ;; resolved from the original dispatch-data
+                        [[::send-email {:to [::user-email]
+                                        :subject "Welcome!"}]])}}
+
+                    ::s/placeholders
+                    {::user-email
+                     {::s/handler (fn [dd] (:user-email dd))}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {:user-email "alice@example.com"} [[::send-welcome]])
+
+      (is (= {:to "alice@example.com" :subject "Welcome!"} @captured))))
+
+  (testing "nested actions with placeholders at each level"
+    (let [log (atom [])
+          registry {::s/effects
+                    {::log
+                     {::s/handler
+                      (fn [_ctx _system msg]
+                        (swap! log conj msg)
+                        :logged)}}
+
+                    ::s/actions
+                    {::outer-action
+                     {::s/handler
+                      (fn [_state]
+                        ;; Returns another action with a placeholder
+                        [[::inner-action [::greeting]]])}
+
+                     ::inner-action
+                     {::s/handler
+                      (fn [_state greeting]
+                        ;; Returns effect with value from placeholder
+                        [[::log greeting]])}}
+
+                    ::s/placeholders
+                    {::greeting
+                     {::s/handler (fn [dd] (:greeting dd))}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {:greeting "Hello, World!"} [[::outer-action]])
+
+      (is (= ["Hello, World!"] @log)))))
+
+(deftest self-preserving-placeholder-continuation-test
+  (testing "self-preserving placeholders work with async continuations"
+    ;; This documents the Nexus pattern for async effects:
+    ;; 1. Placeholder returns itself when data isn't available yet
+    ;; 2. Effect dispatches continuation with additional data
+    ;; 3. Continuation dispatch resolves the placeholder
+    (let [captured (atom nil)
+          registry {::s/effects
+                    {::async-fetch
+                     {::s/handler
+                      (fn [{:keys [dispatch]} _system url continuation-fx]
+                        ;; Simulate async: dispatch continuation with result
+                        (let [result {:data (str "fetched:" url)}]
+                          (dispatch {::fetch-result result} continuation-fx))
+                        :fetch-started)}
+
+                     ::use-data
+                     {::s/handler
+                      (fn [_ctx _system data]
+                        (reset! captured data)
+                        :done)}}
+
+                    ::s/placeholders
+                    {::fetch-result
+                     {::s/handler
+                      (fn [dd]
+                        ;; Self-preserving: return placeholder if data not available
+                        (or (::fetch-result dd) [::fetch-result]))}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      ;; The [::fetch-result] placeholder in the continuation will be
+      ;; preserved during initial dispatch, then resolved when the
+      ;; effect dispatches with {::fetch-result result}
+      (dispatch {} {}
+                [[::async-fetch "http://example.com"
+                  [[::use-data [::fetch-result]]]]])
+
+      (is (= {:data "fetched:http://example.com"} @captured))))
+
+  (testing "self-preserving placeholder with transformation"
+    ;; More realistic example: extract a field from the async result
+    ;; The key pattern is to check dispatch-data for availability
+    (let [captured (atom nil)
+          registry {::s/effects
+                    {::db-query
+                     {::s/handler
+                      (fn [{:keys [dispatch]} _system _sql continuation-fx]
+                        (let [rows [{:id 1 :name "Alice"}
+                                    {:id 2 :name "Bob"}]]
+                          (dispatch {::query-result rows} continuation-fx))
+                        :query-started)}
+
+                     ::process-names
+                     {::s/handler
+                      (fn [_ctx _system names]
+                        (reset! captured names)
+                        :processed)}}
+
+                    ::s/placeholders
+                    {::query-result
+                     {::s/handler
+                      (fn [dd]
+                        (or (::query-result dd) [::query-result]))}
+
+                     ::extract-names
+                     {::s/handler
+                      (fn [dd rows]
+                        ;; Check dispatch-data to know if result is available
+                        ;; This is more robust than checking the rows value
+                        (if (::query-result dd)
+                          (mapv :name rows)
+                          ;; Self-preserve if query hasn't completed
+                          [::extract-names rows]))}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {}
+                [[::db-query "SELECT * FROM users"
+                  [[::process-names [::extract-names [::query-result]]]]]])
+
+      (is (= ["Alice" "Bob"] @captured)))))
+
+;; =============================================================================
 ;; Phase 3: Interceptor Tests
 ;; =============================================================================
 
