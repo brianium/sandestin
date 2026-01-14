@@ -117,9 +117,16 @@ grep -r "defn registry" src/
 ```clojure
 {:<ns>/<placeholder>
  {::s/description "What value this provides"
-  ::s/schema <resolved-value-schema>
-  ::s/handler (fn [dispatch-data & args]
+  ::s/schema [:tuple [:= :<ns>/<placeholder>]]
+  ::s/handler (fn [dispatch-data]
                 (:some-key dispatch-data))}}
+
+;; Placeholder with arguments
+{:<ns>/<placeholder>
+ {::s/description "What value this provides"
+  ::s/schema [:tuple [:= :<ns>/<placeholder>] <arg-schema>]
+  ::s/handler (fn [dispatch-data arg]
+                (get-in dispatch-data [:results arg]))}}
 ```
 
 **Self-Preserving Placeholder** (for async continuations):
@@ -129,6 +136,7 @@ When an effect dispatches continuation effects with new data, placeholders in th
 ```clojure
 {:<ns>/<result>
  {::s/description "Result from async operation, self-preserving"
+  ::s/schema [:tuple [:= :<ns>/<result>]]
   ::s/handler (fn [dispatch-data]
                 ;; Return self if data not yet available
                 (or (:<ns>/<result> dispatch-data)
@@ -219,8 +227,13 @@ When registries have overlapping keys:
 | Field | Purpose |
 |-------|---------|
 | `::s/description` | Human-readable description |
-| `::s/schema` | Malli schema for the effect vector |
+| `::s/schema` | Malli schema for the invocation vector (tuple shape) |
 | `::s/handler` | Implementation function |
+
+**Schema format:** All registrations (effects, actions, placeholders) use the same tuple pattern:
+```clojure
+[:tuple [:= :qualified/keyword] <arg-schemas...>]
+```
 
 ## Optional Fields
 
@@ -243,7 +256,9 @@ When registries have overlapping keys:
 ```clojure
 ;; Extract field from async result
 {:<ns>/result-name
- {::s/handler
+ {::s/description "Extract name from async result"
+  ::s/schema [:tuple [:= :<ns>/result-name]]
+  ::s/handler
   (fn [dispatch-data]
     ;; Check if result is available before transforming
     (if-let [result (:<ns>/result dispatch-data)]
