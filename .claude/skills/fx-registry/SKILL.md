@@ -158,7 +158,46 @@ Flow:
 2. Effect runs, calls `dispatch` with `{:<ns>/result actual-data}`
 3. Continuation dispatch interpolates `[:<ns>/result]` → returns `actual-data`
 
-### 4. Test via REPL
+### 4. Wire Registries to Dispatch
+
+**Important:** `create-dispatch` takes a **vector of registries**, not a single registry.
+
+```clojure
+;; Correct - vector of registries
+(def dispatch (s/create-dispatch [my-registry]))
+
+;; Wrong - will fail
+(def dispatch (s/create-dispatch my-registry))
+```
+
+#### Combining Multiple Registries
+
+Registries can be simple maps or `[registry-fn & args]` vectors for configurable registries:
+
+```clojure
+(ns myapp.dispatch
+  (:require [ascolais.sandestin :as s]
+            [myapp.fx.db :as db]
+            [myapp.fx.logging :as logging]
+            [myapp.fx.http :as http]))
+
+(defn create-dispatch
+  "Create dispatch with all application registries."
+  [{:keys [datasource http-client]}]
+  (s/create-dispatch
+    [[db/registry datasource]      ;; configurable - passes datasource arg
+     logging/registry              ;; simple - no config needed
+     [http/registry http-client]])) ;; configurable - passes client arg
+```
+
+#### Registry Merge Behavior
+
+When registries have overlapping keys:
+- **Effects, actions, placeholders**: Later registry wins (with warning via tap>)
+- **Interceptors**: Concatenated in order
+- **system-schema**: Merged (later wins per key)
+
+### 5. Test via REPL
 
 ```clojure
 (require '[ascolais.sandestin :as s])

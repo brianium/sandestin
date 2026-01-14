@@ -7,6 +7,8 @@ description: Discover available effects, actions, and placeholders in a Sandesti
 
 Discover and understand available effects, actions, and placeholders.
 
+**Important:** All discoverability functions operate on the **dispatch function**, not registries. You must first create a dispatch via `(s/create-dispatch [registries...])` before using these functions.
+
 ## About Sandestin
 
 Sandestin is a Clojure effect dispatch library with schema-driven discoverability. Effects are dispatched as vectors like `[:myapp/save-user {:name "Alice"}]`.
