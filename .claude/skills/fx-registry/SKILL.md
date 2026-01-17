@@ -247,13 +247,34 @@ When registries have overlapping keys:
 | Field | Purpose |
 |-------|---------|
 | `::s/description` | Human-readable description |
-| `::s/schema` | Malli schema for the invocation vector (tuple shape) |
+| `::s/schema` | Malli schema for how the effect is **called** |
 | `::s/handler` | Implementation function |
 
-**Schema format:** All registrations (effects, actions, placeholders) use the same tuple pattern:
+### Schema Format
+
+**Schemas describe invocation shape, NOT return types.** The schema specifies how to call the effect — the effect key and its arguments:
+
 ```clojure
 [:tuple [:= :qualified/keyword] <arg-schemas...>]
 ```
+
+Examples:
+
+```clojure
+;; Effect taking a string argument
+::s/schema [:tuple [:= :mylib.log/info] :string]
+;; Called as: [:mylib.log/info "hello"]
+
+;; Effect taking a set of symbols
+::s/schema [:tuple [:= :mylib.stock/analyze] [:set :string]]
+;; Called as: [:mylib.stock/analyze #{"AAPL" "GOOG"}]
+
+;; Effect taking a map argument
+::s/schema [:tuple [:= :mylib.report/render] [:map {:description "Report data"}]]
+;; Called as: [:mylib.report/render {:title "Q4" :data [...]}]
+```
+
+**Do NOT** document return types in schemas. Schemas are for discoverability of how to invoke effects, not for validating outputs.
 
 ## Optional Fields
 

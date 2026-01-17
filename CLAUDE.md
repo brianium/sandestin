@@ -104,6 +104,25 @@ When adding new dependencies in a REPL-connected environment:
 
 This ensures dependencies are immediately available without restarting the REPL.
 
+## Effect Schemas
+
+Sandestin effect schemas describe **how an effect is called**, not what it returns. The schema specifies the invocation shape: the effect key and its arguments.
+
+```clojure
+;; Schema format
+[:tuple [:= :effect/key] <arg-schemas...>]
+
+;; Example: effect taking a string
+::s/schema [:tuple [:= :my.fx/greet] :string]
+;; Invoked as: [:my.fx/greet "Alice"]
+
+;; Example: effect taking a set
+::s/schema [:tuple [:= :my.fx/analyze] [:set :string]]
+;; Invoked as: [:my.fx/analyze #{"AAPL" "GOOG"}]
+```
+
+**Do NOT** use schemas to document return types — they exist for discoverability of how to invoke effects.
+
 ## Code Style
 
 - Follow standard Clojure conventions
