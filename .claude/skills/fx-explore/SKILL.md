@@ -20,7 +20,7 @@ Sandestin is a Clojure effect dispatch library with schema-driven discoverabilit
 Look for the dependency in `deps.edn`:
 
 ```clojure
-io.github.brianium/sandestin {:git/tag "v0.3.0" :git/sha "2be6acc"}
+io.github.brianium/sandestin {:git/tag "v0.4.0" :git/sha "18335b6"}
 ```
 
 ### Install if Missing
@@ -29,7 +29,7 @@ Add to `deps.edn` under `:deps`:
 
 ```clojure
 {:deps
- {io.github.brianium/sandestin {:git/tag "v0.3.0" :git/sha "2be6acc"}}}
+ {io.github.brianium/sandestin {:git/tag "v0.4.0" :git/sha "18335b6"}}}
 ```
 
 ## Workflow
