@@ -79,11 +79,18 @@
   "Execute a sequence of effects with interceptors."
   [registry interceptors system dispatch-data effects initial-errors]
   (let [;; Create dispatch function for async continuation
+        ;; Supports three arities:
+        ;; - ([fx]) dispatch with current system and dispatch-data
+        ;; - ([extra-dispatch-data fx]) dispatch with merged dispatch-data, same system
+        ;; - ([system-override extra-dispatch-data fx]) dispatch with merged system and dispatch-data
         dispatch-fn (fn dispatch-continuation
                       ([fx]
-                       (dispatch-continuation {} fx))
+                       (dispatch-continuation system {} fx))
                       ([extra-dispatch-data fx]
-                       (dispatch registry system
+                       (dispatch-continuation system extra-dispatch-data fx))
+                      ([system-override extra-dispatch-data fx]
+                       (dispatch registry
+                                 (merge system system-override)
                                  (merge dispatch-data extra-dispatch-data)
                                  fx)))
         ;; Build context for effect handlers

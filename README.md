@@ -70,6 +70,22 @@ Effects are side-effecting operations. Each effect has a handler that receives:
                    result))}}}
 ```
 
+The `dispatch` function in handler context supports three arities:
+- `(dispatch fx)` — dispatch with current system and dispatch-data
+- `(dispatch extra-dispatch-data fx)` — merge additional dispatch-data
+- `(dispatch system-override extra-dispatch-data fx)` — merge into both system and dispatch-data
+
+The 3-arity form enables effects to dispatch nested effects with a modified system context:
+
+```clojure
+;; Route nested effects to a different connection
+(fn [{:keys [dispatch]} system connection-key child-fx]
+  (when-some [alt-conn (get-connection (:pool system) connection-key)]
+    (dispatch {:sse alt-conn}  ; merged into system
+              {}               ; extra dispatch-data
+              child-fx)))
+```
+
 ### Actions
 
 Actions are pure functions that transform state into effect vectors. They receive immutable state (extracted via `::system->state`) and return effects.
