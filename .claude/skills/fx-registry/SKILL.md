@@ -93,9 +93,29 @@ grep -r "defn registry" src/
  {::s/description "What this effect does"
   ::s/schema [:tuple [:= :<ns>/<verb>] <arg-schemas>]
   ::s/system-keys [:key1 :key2]
-  ::s/handler (fn [{:keys [dispatch dispatch-data]} system & args]
+  ::s/handler (fn [{:keys [dispatch dispatch-data system]} system & args]
                 ;; Do side effect, optionally dispatch continuation
                 )}}
+```
+
+**Continuation dispatch arities:**
+
+The `dispatch` function in handler context supports three arities:
+
+| Arity | Purpose |
+|-------|---------|
+| `(dispatch fx)` | Dispatch with current system and dispatch-data |
+| `(dispatch extra-data fx)` | Merge `extra-data` into dispatch-data |
+| `(dispatch system-override extra-data fx)` | Merge into both system and dispatch-data |
+
+```clojure
+;; Add data for placeholders in continuation
+(dispatch {:result result} continuation-fx)
+
+;; Override system for nested effects (e.g., route to different connection)
+(dispatch {:sse alt-connection}  ;; merged into system
+          {:request-id id}       ;; merged into dispatch-data
+          continuation-fx)
 ```
 
 **Action** (pure, returns effect vectors):
