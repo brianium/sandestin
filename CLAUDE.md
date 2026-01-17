@@ -46,7 +46,28 @@ src/clj/          # Clojure source files
 dev/src/clj/      # Development-only source (user.clj, dev.clj)
 test/src/clj/     # Test files
 resources/        # Resource files
+specs/            # Living specifications
 ```
+
+## Specifications
+
+The `specs/` directory contains living documents for planning and tracking work.
+
+### Structure
+
+- **`specs/README.md`** - Meta document organizing current priorities
+- **`specs/<name>.md`** - Individual spec files for features or concepts
+
+### Starting a Session
+
+At the start of a Claude session, read `specs/README.md` to understand current priorities and what to work on. The meta document links to detailed specs for active work.
+
+### Maintaining Specs
+
+- Create new specs as `specs/<feature-name>.md` when planning features
+- Update spec files as work progresses (track done/todo items)
+- Update `specs/README.md` when priorities change
+- Specs are living documents—update them as understanding evolves
 
 ## REPL Evaluation
 
