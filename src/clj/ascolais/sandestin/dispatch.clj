@@ -42,15 +42,14 @@
            :err e})))))
 
 (defn- execute-effect-with-interceptors
-  "Execute a single effect wrapped with before/after-effect interceptors."
-  [registry interceptors handler-ctx system effect results errors]
-  (let [;; Build interceptor context for this effect
-        effect-ctx {:system system
-                    :dispatch-data (:dispatch-data handler-ctx)
-                    :dispatch (:dispatch handler-ctx)
-                    :effect effect
-                    :results results
-                    :errors errors}
+  "Execute a single effect wrapped with before/after-effect interceptors.
+
+   Receives the full context and returns updated context with accumulated
+   results/errors and any modifications made by interceptors (including
+   dispatch-data changes)."
+  [registry interceptors ctx effect]
+  (let [;; Add effect-specific key to context
+        effect-ctx (assoc ctx :effect effect)
 
         ;; Run before-effect interceptors
         before-ctx (interceptors/run-before interceptors :effect effect-ctx)]
@@ -58,31 +57,42 @@
     (if (interceptors/halted? before-ctx)
       ;; Halted - skip execution, just run after interceptors
       (let [after-ctx (interceptors/run-after interceptors :effect before-ctx)]
-        {:results (:results after-ctx)
-         :errors (:errors after-ctx)})
+        ;; Return context without the effect-specific key
+        (dissoc after-ctx :effect :result))
 
-      ;; Execute the effect
-      (let [result (execute-single-effect registry handler-ctx system effect)
+      ;; Execute the effect - build handler-ctx from current context
+      (let [handler-ctx {:dispatch (:dispatch before-ctx)
+                         :dispatch-data (:dispatch-data before-ctx)
+                         :system (:system before-ctx)}
+            result (execute-single-effect registry handler-ctx (:system before-ctx) effect)
             ;; Update context with result
             exec-ctx (if (:err result)
-                       (update before-ctx :errors conj
-                               {:phase :execute-effect
-                                :effect (:effect result)
-                                :err (:err result)})
-                       (update before-ctx :results conj result))
+                       (-> before-ctx
+                           (update :errors conj
+                                   {:phase :execute-effect
+                                    :effect (:effect result)
+                                    :err (:err result)})
+                           (assoc :result nil))
+                       (-> before-ctx
+                           (update :results conj result)
+                           (assoc :result (:res result))))
             ;; Run after-effect interceptors
             after-ctx (interceptors/run-after interceptors :effect exec-ctx)]
-        {:results (:results after-ctx)
-         :errors (:errors after-ctx)}))))
+        ;; Return context without effect-specific keys
+        (dissoc after-ctx :effect :result)))))
 
 (defn- execute-effects
-  "Execute a sequence of effects with interceptors."
-  [registry interceptors system dispatch-data effects initial-errors]
-  (let [;; Create dispatch function for async continuation
-        ;; Supports three arities:
-        ;; - ([fx]) dispatch with current system and dispatch-data
-        ;; - ([extra-dispatch-data fx]) dispatch with merged dispatch-data, same system
-        ;; - ([system-override extra-dispatch-data fx]) dispatch with merged system and dispatch-data
+  "Execute a sequence of effects with interceptors.
+
+   Receives a context map and executes each effect, threading the context
+   through so modifications (including dispatch-data) propagate between effects."
+  [registry interceptors ctx effects]
+  (let [system (:system ctx)
+        ;; Create dispatch function for async continuation
+        ;; Note: This captures the initial dispatch-data. Each effect execution
+        ;; will build its own handler-ctx from the current context state.
+        ;; For continuations, we use the original dispatch-data as the base.
+        initial-dispatch-data (:dispatch-data ctx)
         dispatch-fn (fn dispatch-continuation
                       ([fx]
                        (dispatch-continuation system {} fx))
@@ -91,18 +101,15 @@
                       ([system-override extra-dispatch-data fx]
                        (dispatch registry
                                  (merge system system-override)
-                                 (merge dispatch-data extra-dispatch-data)
+                                 (merge initial-dispatch-data extra-dispatch-data)
                                  fx)))
-        ;; Build context for effect handlers
-        handler-ctx {:dispatch dispatch-fn
-                     :dispatch-data dispatch-data
-                     :system system}]
-    ;; Execute each effect with interceptors
+        ;; Add dispatch function to context
+        ctx-with-dispatch (assoc ctx :dispatch dispatch-fn)]
+    ;; Execute each effect with interceptors, threading context through
     (reduce
-     (fn [{:keys [results errors]} effect]
-       (execute-effect-with-interceptors
-        registry interceptors handler-ctx system effect results errors))
-     {:results [] :errors initial-errors}
+     (fn [current-ctx effect]
+       (execute-effect-with-interceptors registry interceptors current-ctx effect))
+     ctx-with-dispatch
      effects)))
 
 ;; =============================================================================
@@ -130,12 +137,13 @@
                    :err e}})))))
 
 (defn- expand-action-with-interceptors
-  "Expand a single action wrapped with before/after-action interceptors."
-  [registry interceptors state action errors]
-  (let [;; Build interceptor context for this action
-        action-ctx {:state state
-                    :action action
-                    :errors errors}
+  "Expand a single action wrapped with before/after-action interceptors.
+
+   Receives the full context (including dispatch-data) and returns updated
+   context with expanded actions and any modifications made by interceptors."
+  [registry interceptors ctx action]
+  (let [;; Add action-specific key to context
+        action-ctx (assoc ctx :action action)
 
         ;; Run before-action interceptors
         before-ctx (interceptors/run-before interceptors :action action-ctx)]
@@ -144,11 +152,13 @@
       ;; Halted - skip expansion, just run after interceptors
       (let [after-ctx (interceptors/run-after interceptors :action
                                               (assoc before-ctx :actions []))]
-        {:expanded []
-         :errors (:errors after-ctx)})
+        ;; Return context with empty actions, without action-specific key
+        (-> after-ctx
+            (assoc :expanded [])
+            (dissoc :action :actions)))
 
       ;; Expand the action
-      (let [{:keys [expanded error]} (expand-single-action registry state action)
+      (let [{:keys [expanded error]} (expand-single-action registry (:state before-ctx) action)
             ;; Update context with expansion result
             exec-ctx (if error
                        (-> before-ctx
@@ -157,56 +167,68 @@
                        (assoc before-ctx :actions expanded))
             ;; Run after-action interceptors
             after-ctx (interceptors/run-after interceptors :action exec-ctx)]
-        {:expanded (or (:actions after-ctx) [])
-         :errors (:errors after-ctx)}))))
+        ;; Return context with expanded actions
+        (-> after-ctx
+            (assoc :expanded (or (:actions after-ctx) []))
+            (dissoc :action :actions))))))
 
 (defn- expand-actions-with-interceptors
   "Recursively expand actions until only effects remain, with interceptors.
-   Interpolates placeholders between each action expansion round."
-  [registry interceptors dispatch-data state actions-or-effects max-depth]
+   Interpolates placeholders between each action expansion round.
+
+   Receives and returns a context map, threading dispatch-data modifications
+   through the expansion process. The :effects key accumulates the final
+   flattened list of effects."
+  [registry interceptors ctx actions-or-effects max-depth]
   (let [placeholders-map (:ascolais.sandestin/placeholders registry)]
     (if (zero? max-depth)
-      {:effects []
-       :errors [{:phase :expand-action
-                 :err (ex-info "Max action expansion depth reached" {})}]}
+      (update ctx :errors conj {:phase :expand-action
+                                :err (ex-info "Max action expansion depth reached" {})})
       (reduce
-       (fn [{:keys [effects errors]} item]
+       (fn [current-ctx item]
          (let [[item-key] item]
            (cond
-             ;; It's an effect - pass through
+             ;; It's an effect - pass through, accumulate in :effects
              (actions/effect? registry item-key)
-             {:effects (conj effects item)
-              :errors errors}
+             (update current-ctx :effects conj item)
 
              ;; It's an action - expand with interceptors
              (actions/action? registry item-key)
-             (let [{:keys [expanded errors]}
-                   (expand-action-with-interceptors registry interceptors state item errors)]
+             (let [result-ctx (expand-action-with-interceptors
+                               registry interceptors current-ctx item)
+                   expanded (:expanded result-ctx)]
                (if (seq expanded)
                  ;; Interpolate placeholders after expansion (Nexus 2025.10.1 behavior)
                  ;; This allows actions to introduce placeholders that get resolved
                  (let [interpolated-expanded (if (seq placeholders-map)
                                                (placeholders/interpolate
-                                                placeholders-map dispatch-data expanded)
+                                                placeholders-map
+                                                (:dispatch-data result-ctx)
+                                                expanded)
                                                expanded)
-                       ;; Recursively expand the result
-                       recursive-result
-                       (expand-actions-with-interceptors
-                        registry interceptors dispatch-data state
-                        interpolated-expanded (dec max-depth))]
-                   {:effects (into effects (:effects recursive-result))
-                    :errors (into errors (:errors recursive-result))})
-                 {:effects effects
-                  :errors errors}))
+                       ;; Recursively expand the result, using updated context
+                       ;; Note: we pass the current effects forward so they accumulate
+                       recursive-ctx (expand-actions-with-interceptors
+                                      registry interceptors
+                                      (dissoc result-ctx :expanded)
+                                      interpolated-expanded
+                                      (dec max-depth))]
+                   recursive-ctx)
+                 ;; No expanded actions, just return updated context
+                 (dissoc result-ctx :expanded)))
 
              ;; Unknown - error
              :else
-             {:effects effects
-              :errors (conj errors {:phase :expand-action
-                                    :action item
-                                    :err (ex-info "Unknown action or effect"
-                                                  {:key item-key})})})))
-       {:effects [] :errors []}
+             (update current-ctx :errors conj
+                     {:phase :expand-action
+                      :action item
+                      :err (ex-info "Unknown action or effect"
+                                    {:key item-key})}))))
+       ;; Initialize effects vector only if not already present
+       ;; This allows recursive calls to accumulate into existing effects
+       (if (contains? ctx :effects)
+         ctx
+         (assoc ctx :effects []))
        actions-or-effects))))
 
 ;; =============================================================================
@@ -222,6 +244,9 @@
    3. Expand actions to effects (with before/after-action interceptors)
    4. Execute effects (with before/after-effect interceptors)
    5. after-dispatch interceptors
+
+   Context flows continuously through all phases. Modifications made by
+   interceptors (including to :dispatch-data) propagate to subsequent phases.
 
    Arguments:
    - registry: A merged registry map
@@ -252,31 +277,26 @@
         {:results (:results after-ctx)
          :errors (:errors after-ctx)})
 
-      ;; Normal flow
-      (let [;; Step 1: Interpolate placeholders
+      ;; Normal flow - context flows through all phases
+      (let [;; Step 1: Interpolate placeholders using current dispatch-data
+            ;; (which may have been modified by before-dispatch interceptors)
             interpolated (if (seq placeholders-map)
                            (placeholders/interpolate-effects
-                            placeholders-map dispatch-data actions-or-effects)
-                           actions-or-effects)
+                            placeholders-map (:dispatch-data before-ctx) (:actions before-ctx))
+                           (:actions before-ctx))
 
             ;; Step 2: Expand actions to effects (with interceptors)
-            ;; Placeholders are also interpolated between each action expansion
-            {:keys [effects errors]}
-            (expand-actions-with-interceptors
-             registry interceptors dispatch-data state interpolated max-action-depth)
+            ;; Context flows through, dispatch-data modifications propagate
+            expand-ctx (expand-actions-with-interceptors
+                        registry interceptors before-ctx interpolated max-action-depth)
 
             ;; Step 3: Execute effects (with interceptors)
-            exec-result (execute-effects
-                         registry interceptors system dispatch-data effects errors)
-
-            ;; Build final context for after-dispatch
-            ;; Merge errors from before-dispatch with errors from execution
-            final-ctx (assoc before-ctx
-                             :results (:results exec-result)
-                             :errors (into (:errors before-ctx) (:errors exec-result)))
+            ;; Context continues to flow, dispatch-data modifications propagate
+            exec-ctx (execute-effects
+                      registry interceptors expand-ctx (:effects expand-ctx))
 
             ;; Step 4: Run after-dispatch interceptors
-            after-ctx (interceptors/run-after interceptors :dispatch final-ctx)]
+            after-ctx (interceptors/run-after interceptors :dispatch exec-ctx)]
 
         {:results (:results after-ctx)
          :errors (:errors after-ctx)}))))

@@ -4,25 +4,12 @@ This directory contains living specifications for sandestin features and concept
 
 ## Current Priorities
 
-_No active priorities._
-
-## Spec Index
-
-_No specs yet._
-
-<!--
-Example structure once specs exist:
-
-## Current Priorities
-
-1. [Feature Name](./feature-name.md) - Brief description of current focus
+No active priorities. All specs are complete.
 
 ## Spec Index
 
 | Spec | Status | Description |
 |------|--------|-------------|
-| [feature-name](./feature-name.md) | Active | What this feature does |
-| [other-feature](./other-feature.md) | Complete | Another feature |
+| [001-interceptor-dispatch-data-propagation](./001-interceptor-dispatch-data-propagation.md) | Complete | Propagate dispatch-data modifications from before-dispatch interceptors to effect handlers |
 
 Status values: Draft, Active, Complete, Archived
--->

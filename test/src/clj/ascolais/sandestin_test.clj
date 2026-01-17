@@ -1175,6 +1175,226 @@
 ;; Phase 5: System Schema Tests
 ;; =============================================================================
 
+;; =============================================================================
+;; Phase 6: Continuous Context Flow Tests
+;; =============================================================================
+
+(deftest before-dispatch-can-modify-dispatch-data
+  (testing "Effect handler sees dispatch-data modified by before-dispatch interceptor"
+    (let [interceptor {:before-dispatch
+                       (fn [ctx]
+                         (assoc-in ctx [:dispatch-data :injected] :by-interceptor))}
+
+          effect-received (atom nil)
+
+          registry {::s/interceptors [interceptor]
+                    ::s/effects
+                    {::capture
+                     {::s/handler
+                      (fn [{:keys [dispatch-data]} _]
+                        (reset! effect-received dispatch-data))}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::capture]])
+
+      (is (= :by-interceptor (:injected @effect-received))
+          "Effect handler should see dispatch-data modified by before-dispatch interceptor"))))
+
+(deftest before-action-can-access-dispatch-data
+  (testing "before-action interceptor sees dispatch-data"
+    (let [seen-dispatch-data (atom nil)
+          interceptor {:before-action
+                       (fn [ctx]
+                         (reset! seen-dispatch-data (:dispatch-data ctx))
+                         ctx)}
+
+          registry {::s/interceptors [interceptor]
+                    ::s/actions
+                    {::test-action
+                     {::s/handler
+                      (fn [_state] [[::noop]])}}
+                    ::s/effects
+                    {::noop
+                     {::s/handler (fn [_ _])}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {:my-key :my-value} [[::test-action]])
+
+      (is (= {:my-key :my-value} @seen-dispatch-data)
+          "before-action interceptor should see dispatch-data"))))
+
+(deftest before-effect-modifications-propagate
+  (testing "Each before-effect sees prior effect's dispatch-data modifications"
+    (let [call-order (atom [])
+          interceptor {:before-effect
+                       (fn [ctx]
+                         (swap! call-order conj (:dispatch-data ctx))
+                         (update-in ctx [:dispatch-data :counter] (fnil inc 0)))}
+
+          registry {::s/interceptors [interceptor]
+                    ::s/effects
+                    {::noop {::s/handler (fn [_ _])}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::noop] [::noop] [::noop]])
+
+      (is (= [{} {:counter 1} {:counter 2}] @call-order)
+          "Each before-effect should see prior effect's modifications"))))
+
+(deftest dispatch-data-modifications-dont-leak-between-dispatches
+  (testing "Modifications don't leak between separate dispatches"
+    (let [interceptor {:before-dispatch
+                       (fn [ctx]
+                         (assoc-in ctx [:dispatch-data :modified] true))}
+
+          effect-received (atom nil)
+
+          registry {::s/interceptors [interceptor]
+                    ::s/effects
+                    {::capture
+                     {::s/handler
+                      (fn [{:keys [dispatch-data]} _]
+                        (reset! effect-received dispatch-data))}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      ;; First dispatch with empty dispatch-data
+      (dispatch {} {} [[::capture]])
+      (is (= {:modified true} @effect-received))
+
+      ;; Second dispatch should start fresh
+      (reset! effect-received nil)
+      (dispatch {} {:other :data} [[::capture]])
+      (is (= {:other :data :modified true} @effect-received)
+          "Second dispatch should start with provided dispatch-data, not prior modifications"))))
+
+;;; After-phase tests
+
+(deftest after-action-sees-produced-actions
+  (testing "after-action sees effects produced by action handler"
+    (let [seen-actions (atom nil)
+          interceptor {:after-action
+                       (fn [ctx]
+                         (reset! seen-actions (:actions ctx))
+                         ctx)}
+
+          registry {::s/interceptors [interceptor]
+                    ::s/actions
+                    {::produce-effects
+                     {::s/handler
+                      (fn [_state]
+                        [[::effect-a] [::effect-b]])}}
+                    ::s/effects
+                    {::effect-a {::s/handler (fn [_ _])}
+                     ::effect-b {::s/handler (fn [_ _])}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::produce-effects]])
+
+      (is (= [[::effect-a] [::effect-b]] @seen-actions)
+          "after-action should see effects produced by action handler"))))
+
+(deftest after-effect-sees-result
+  (testing "after-effect sees return value from effect handler"
+    (let [seen-result (atom nil)
+          interceptor {:after-effect
+                       (fn [ctx]
+                         (reset! seen-result (:result ctx))
+                         ctx)}
+
+          registry {::s/interceptors [interceptor]
+                    ::s/effects
+                    {::return-value
+                     {::s/handler
+                      (fn [_ _] {:status :ok :data 42})}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::return-value]])
+
+      (is (= {:status :ok :data 42} @seen-result)
+          "after-effect should see return value from effect handler"))))
+
+(deftest after-dispatch-sees-accumulated-results
+  (testing "after-dispatch sees all effect results"
+    (let [seen-results (atom nil)
+          interceptor {:after-dispatch
+                       (fn [ctx]
+                         (reset! seen-results (:results ctx))
+                         ctx)}
+
+          registry {::s/interceptors [interceptor]
+                    ::s/effects
+                    {::fx-a {::s/handler (fn [_ _] :result-a)}
+                     ::fx-b {::s/handler (fn [_ _] :result-b)}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::fx-a] [::fx-b]])
+
+      (is (= [{:effect [::fx-a] :res :result-a}
+              {:effect [::fx-b] :res :result-b}]
+             @seen-results)
+          "after-dispatch should see all effect results"))))
+
+(deftest after-interceptors-run-in-lifo-order
+  (testing "after-action interceptors run in reverse order (LIFO)"
+    (let [call-order (atom [])
+          interceptor-a {:id :a
+                         :after-action #(do (swap! call-order conj :a) %)}
+          interceptor-b {:id :b
+                         :after-action #(do (swap! call-order conj :b) %)}
+          interceptor-c {:id :c
+                         :after-action #(do (swap! call-order conj :c) %)}
+
+          registry {::s/interceptors [interceptor-a interceptor-b interceptor-c]
+                    ::s/actions
+                    {::test {::s/handler (fn [_] [[::noop]])}}
+                    ::s/effects
+                    {::noop {::s/handler (fn [_ _])}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::test]])
+
+      (is (= [:c :b :a] @call-order)
+          "after-action interceptors should run in reverse order (LIFO)"))))
+
+(deftest after-phase-modifications-propagate-between-interceptors
+  (testing "Outer after-interceptor sees modifications from inner"
+    (let [seen-by-outer (atom nil)
+          inner-interceptor {:id :inner
+                             :after-action
+                             (fn [ctx]
+                               (assoc ctx :added-by-inner :hello))}
+          outer-interceptor {:id :outer
+                             :after-action
+                             (fn [ctx]
+                               (reset! seen-by-outer (:added-by-inner ctx))
+                               ctx)}
+
+          ;; outer is first in vector, so runs last in after-action (LIFO)
+          registry {::s/interceptors [outer-interceptor inner-interceptor]
+                    ::s/actions
+                    {::test {::s/handler (fn [_] [[::noop]])}}
+                    ::s/effects
+                    {::noop {::s/handler (fn [_ _])}}}
+
+          dispatch (s/create-dispatch [registry])]
+
+      (dispatch {} {} [[::test]])
+
+      (is (= :hello @seen-by-outer)
+          "Outer after-interceptor should see modifications from inner"))))
+
+;; =============================================================================
+;; Phase 5: System Schema Tests
+;; =============================================================================
+
 (deftest system-schema-test
   (testing "system-schema returns merged schema from registries"
     (let [db-registry {::s/effects
