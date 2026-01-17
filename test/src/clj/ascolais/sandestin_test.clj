@@ -236,6 +236,118 @@
              @captured)))))
 
 ;; =============================================================================
+;; System Override Tests
+;; =============================================================================
+
+(deftest system-override-dispatch-test
+  (testing "continuation dispatch with system override (3-arity)"
+    (let [captured-system (atom nil)
+          registry {::s/effects
+                    {::parent
+                     {::s/handler (fn [{:keys [dispatch system]} _system child-fx]
+                                    ;; Override :sse key in system
+                                    (dispatch {:sse :new-connection} {} child-fx)
+                                    :parent-done)}
+                     ::child
+                     {::s/handler (fn [_ctx system]
+                                    (reset! captured-system system)
+                                    :child-done)}}}
+          dispatch (s/create-dispatch [registry])]
+      (dispatch {:sse :original-connection :request {:uri "/test"}}
+                {}
+                [[::parent [[::child]]]])
+      ;; System should have :sse overridden but :request preserved
+      (is (= :new-connection (:sse @captured-system)))
+      (is (= {:uri "/test"} (:request @captured-system)))))
+
+  (testing "system override merges with current system"
+    (let [captured-system (atom nil)
+          registry {::s/effects
+                    {::router
+                     {::s/handler (fn [{:keys [dispatch]} _system alt-db child-fx]
+                                    ;; Override :db while preserving other system keys
+                                    (dispatch {:db alt-db} {} child-fx)
+                                    :routed)}
+                     ::worker
+                     {::s/handler (fn [_ctx system]
+                                    (reset! captured-system system)
+                                    :worked)}}}
+          dispatch (s/create-dispatch [registry])]
+      (dispatch {:db :primary-db :cache :redis :config {:env :prod}}
+                {}
+                [[::router :secondary-db [[::worker]]]])
+      ;; :db should be overridden, other keys preserved
+      (is (= :secondary-db (:db @captured-system)))
+      (is (= :redis (:cache @captured-system)))
+      (is (= {:env :prod} (:config @captured-system)))))
+
+  (testing "system override with dispatch-data in same call"
+    (let [captured (atom {})
+          registry {::s/effects
+                    {::parent
+                     {::s/handler (fn [{:keys [dispatch]} _system child-fx]
+                                    ;; Override both system and dispatch-data
+                                    (dispatch {:sse :alt-connection}
+                                              {:extra-data :from-parent}
+                                              child-fx)
+                                    :parent-done)}
+                     ::child
+                     {::s/handler (fn [{:keys [dispatch-data]} system]
+                                    (reset! captured {:system system
+                                                      :dispatch-data dispatch-data})
+                                    :child-done)}}}
+          dispatch (s/create-dispatch [registry])]
+      (dispatch {:sse :original :db :postgres}
+                {:request-id 123}
+                [[::parent [[::child]]]])
+      ;; Both system and dispatch-data should be merged
+      (is (= :alt-connection (get-in @captured [:system :sse])))
+      (is (= :postgres (get-in @captured [:system :db])))
+      (is (= 123 (get-in @captured [:dispatch-data :request-id])))
+      (is (= :from-parent (get-in @captured [:dispatch-data :extra-data])))))
+
+  (testing "empty system override preserves original system"
+    (let [captured-system (atom nil)
+          registry {::s/effects
+                    {::parent
+                     {::s/handler (fn [{:keys [dispatch]} _system child-fx]
+                                    ;; Empty override should preserve system
+                                    (dispatch {} {} child-fx)
+                                    :parent-done)}
+                     ::child
+                     {::s/handler (fn [_ctx system]
+                                    (reset! captured-system system)
+                                    :child-done)}}}
+          dispatch (s/create-dispatch [registry])]
+      (dispatch {:db :postgres :cache :redis} {} [[::parent [[::child]]]])
+      (is (= {:db :postgres :cache :redis} @captured-system))))
+
+  (testing "chained system overrides accumulate"
+    (let [captured-system (atom nil)
+          registry {::s/effects
+                    {::level1
+                     {::s/handler (fn [{:keys [dispatch]} _system child-fx]
+                                    (dispatch {:added-by :level1} {} child-fx)
+                                    :level1-done)}
+                     ::level2
+                     {::s/handler (fn [{:keys [dispatch]} _system child-fx]
+                                    (dispatch {:added-by :level2 :also :here} {} child-fx)
+                                    :level2-done)}
+                     ::level3
+                     {::s/handler (fn [_ctx system]
+                                    (reset! captured-system system)
+                                    :level3-done)}}}
+          dispatch (s/create-dispatch [registry])]
+      (dispatch {:original :data}
+                {}
+                [[::level1 [[::level2 [[::level3]]]]]])
+      ;; Each level's override merges into the running system
+      ;; level2 overrides level1's :added-by
+      (is (= :level2 (:added-by @captured-system)))
+      (is (= :here (:also @captured-system)))
+      (is (= :data (:original @captured-system))))))
+
+;; =============================================================================
 ;; Dispatch Arities Test
 ;; =============================================================================
 
