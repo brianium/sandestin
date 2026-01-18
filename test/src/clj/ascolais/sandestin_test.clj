@@ -1433,3 +1433,34 @@
           dispatch (s/create-dispatch [registry])
           desc (s/describe dispatch :db/query)]
       (is (= [:datasource :cache] (::s/system-keys desc))))))
+
+;; =============================================================================
+;; Dispatch Initializer Tests
+;; =============================================================================
+
+(deftest dispatch-initializer-test
+  (testing "creates dispatch from config map"
+    (let [registry {::s/effects
+                    {::noop {::s/handler (fn [_ _] :ok)}}}
+          d (s/dispatch {:registries [registry]})]
+      (is (instance? ascolais.sandestin.Dispatch d))
+      (is (= [{:effect [::noop] :res :ok}]
+             (:results (d {} {} [[::noop]]))))))
+
+  (testing "works with multiple registries"
+    (let [reg-a {::s/effects
+                 {::fx-a {::s/handler (fn [_ _] :a)}}}
+          reg-b {::s/effects
+                 {::fx-b {::s/handler (fn [_ _] :b)}}}
+          d (s/dispatch {:registries [reg-a reg-b]})]
+      (is (= :a (:res (first (:results (d {} {} [[::fx-a]]))))))
+      (is (= :b (:res (first (:results (d {} {} [[::fx-b]]))))))))
+
+  (testing "supports registry function vectors"
+    (let [make-registry (fn [value]
+                          {::s/effects
+                           {::configured {::s/handler
+                                          (fn [_ _] value)}}})
+          d (s/dispatch {:registries [[make-registry :configured-value]]})]
+      (is (= :configured-value
+             (:res (first (:results (d {} {} [[::configured]])))))))))

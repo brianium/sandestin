@@ -10,6 +10,7 @@ No active priorities. All specs are complete.
 
 | Spec | Status | Description |
 |------|--------|-------------|
+| [002-dispatch-initializer](./002-dispatch-initializer.md) | Complete | Integrant-style dispatch initializer for component systems |
 | [001-interceptor-dispatch-data-propagation](./001-interceptor-dispatch-data-propagation.md) | Complete | Propagate dispatch-data modifications from before-dispatch interceptors to effect handlers |
 
 Status values: Draft, Active, Complete, Archived

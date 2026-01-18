@@ -2,6 +2,7 @@
   "Effect dispatch library with schema-driven discoverability.
 
    Core API:
+   - dispatch: Initialize a dispatch function from config (component system friendly)
    - create-dispatch: Create a dispatch function from registries
    - describe: Describe registered effects, actions, placeholders
    - sample: Generate sample effects using Malli
@@ -64,6 +65,28 @@
   [registries]
   (let [merged (registry/merge-registries registries)]
     (->Dispatch merged)))
+
+(defn dispatch
+  "Initialize a dispatch function from configuration.
+
+   Integrant-style initializer that creates a Dispatch from a config map.
+   Designed for easy integration with component systems.
+
+   Config keys:
+   - :registries - Vector of registries (required), passed to create-dispatch
+
+   Example:
+     ;; Integrant config
+     {:my-app/dispatch {:registries [[db/registry {:dbtype \"sqlite\"}]
+                                     logger/registry]}}
+
+     ;; Integrant init-key
+     (defmethod ig/init-key :my-app/dispatch [_ config]
+       (s/dispatch config))
+
+   See create-dispatch for registry format details."
+  [{:keys [registries]}]
+  (create-dispatch registries))
 
 ;; =============================================================================
 ;; Discoverability
