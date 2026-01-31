@@ -1,16 +1,12 @@
 # Specifications
 
-This directory contains living specifications for sandestin features and concepts.
+*Auto-generated on 2026-01-30 21:45*
 
-## Current Priorities
+## Planned
 
-No active priorities. All specs are complete.
+- [Deep Grep](deep-grep/README.md)
 
-## Spec Index
+## Completed
 
-| Spec | Status | Description |
-|------|--------|-------------|
-| [002-dispatch-initializer](./002-dispatch-initializer.md) | Complete | Integrant-style dispatch initializer for component systems |
-| [001-interceptor-dispatch-data-propagation](./001-interceptor-dispatch-data-propagation.md) | Complete | Propagate dispatch-data modifications from before-dispatch interceptors to effect handlers |
-
-Status values: Draft, Active, Complete, Archived
+- [Continuous Context Flow for Interceptors](001-interceptor-dispatch-data-propagation/README.md)
+- [Dispatch Initializer Function](002-dispatch-initializer/README.md)
