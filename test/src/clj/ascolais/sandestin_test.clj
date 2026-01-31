@@ -1142,6 +1142,90 @@
           results (s/grep dispatch "nonexistent")]
       (is (empty? results)))))
 
+;; =============================================================================
+;; Deep Grep Tests
+;; =============================================================================
+
+(def deep-grep-registry
+  "Registry for testing deep grep functionality."
+  {::s/effects
+   {:stock/analyze
+    {::s/description "Analyze stock performance"
+     ::s/schema [:tuple
+                 [:= :stock/analyze]
+                 [:map
+                  [:ticker {:description "Stock ticker symbol (e.g., AAPL, GOOG)"} :string]
+                  [:threshold {:description "Alert threshold percentage"} :double]]]
+     ::s/handler (fn [_ _ _] :analyzed)}
+
+    :email/send
+    {::s/description "Send an email notification"
+     ::s/schema [:tuple
+                 [:= :email/send]
+                 [:map
+                  [:to {:description "Recipient email address"} :string]
+                  [:subject :string]
+                  [:body :string]]]
+     ::s/handler (fn [_ _ _] :sent)
+     ;; Library-provided metadata
+     :mylib/returns {:type :confirmation :fields [:message-id :timestamp]}
+     :mylib/examples [{:desc "Send welcome email"
+                       :effect [:email/send {:to "user@example.com"
+                                             :subject "Welcome!"
+                                             :body "Hello there"}]}]}}
+
+   ::s/actions
+   {:workflow/process
+    {::s/description "Process a workflow"
+     ::s/schema [:tuple [:= :workflow/process] :keyword]
+     ::s/handler (fn [_ _] [])
+     ;; Nested metadata with searchable content
+     :mylib/tags #{:automation :batch-processing}}}})
+
+(deftest deep-grep-schema-description-test
+  (testing "grep finds effect by Malli schema parameter description"
+    (let [dispatch (s/create-dispatch [deep-grep-registry])
+          results (s/grep dispatch "ticker symbol")]
+      (is (= 1 (count results)))
+      (is (= :stock/analyze (::s/key (first results))))))
+
+  (testing "grep finds effect by another parameter description"
+    (let [dispatch (s/create-dispatch [deep-grep-registry])
+          results (s/grep dispatch "threshold percentage")]
+      (is (= 1 (count results)))
+      (is (= :stock/analyze (::s/key (first results))))))
+
+  (testing "grep finds effect by recipient description"
+    (let [dispatch (s/create-dispatch [deep-grep-registry])
+          results (s/grep dispatch "recipient email")]
+      (is (= 1 (count results)))
+      (is (= :email/send (::s/key (first results)))))))
+
+(deftest deep-grep-library-metadata-test
+  (testing "grep finds effect by library-provided returns metadata"
+    (let [dispatch (s/create-dispatch [deep-grep-registry])
+          results (s/grep dispatch "confirmation")]
+      (is (= 1 (count results)))
+      (is (= :email/send (::s/key (first results))))))
+
+  (testing "grep finds effect by example content"
+    (let [dispatch (s/create-dispatch [deep-grep-registry])
+          results (s/grep dispatch "welcome email")]
+      (is (= 1 (count results)))
+      (is (= :email/send (::s/key (first results))))))
+
+  (testing "grep finds action by tag in set"
+    (let [dispatch (s/create-dispatch [deep-grep-registry])
+          results (s/grep dispatch "automation")]
+      (is (= 1 (count results)))
+      (is (= :workflow/process (::s/key (first results))))))
+
+  (testing "grep finds action by another tag"
+    (let [dispatch (s/create-dispatch [deep-grep-registry])
+          results (s/grep dispatch "batch-processing")]
+      (is (= 1 (count results)))
+      (is (= :workflow/process (::s/key (first results)))))))
+
 (deftest schemas-test
   (testing "schemas returns map of all schemas"
     (let [dispatch (s/create-dispatch [discoverability-registry])

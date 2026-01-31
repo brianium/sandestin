@@ -1,0 +1,5 @@
+Resuming after compaction - run /specs implement to continue in-progress specifications.
+
+Workflow reminders:
+- Use the clojure-eval skill to test things out in the running REPL
+- Write tests AFTER validating behavior in the REPL

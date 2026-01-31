@@ -2,22 +2,22 @@
 
 ## Overview
 
-Extend `grep` to recursively search all metadata in effect registrations, enabling conceptual discovery across parameter descriptions, return schemas, examples, and custom keys.
+Extend `grep` to recursively search all metadata in effect registrations, enabling conceptual discovery across Malli schema parameter descriptions and any library-provided metadata keys.
 
 ## Prerequisites
 
-- [ ] Review current `describe.clj` implementation
-- [ ] Understand Malli schema property structure
+- [x] Review current `describe.clj` implementation
+- [x] Understand Malli schema property structure
 
 ## Phase 1: Schema Description Extraction
 
 Create a helper to walk Malli schemas and extract all `:description` values.
 
-- [ ] Add `walk-schema-descriptions` function
+- [x] Add `walk-schema-descriptions` function
   - Input: Malli schema (vector/map form)
   - Output: Concatenated string of all `:description` values found
   - Handle: `:map` properties, `:tuple` elements, `:or`/`:and` branches, nested schemas
-- [ ] Add unit tests for schema walking
+- [x] Add unit tests for schema walking
   - Simple `:map` with property descriptions
   - Nested maps
   - Union types (`:or`)
@@ -27,24 +27,22 @@ Create a helper to walk Malli schemas and extract all `:description` values.
 
 Create a helper to extract all searchable text from a registration description map.
 
-- [ ] Add `registration->searchable-text` function
+- [x] Add `registration->searchable-text` function
   - Extract `::s/key` (stringify)
   - Extract `::s/description`
-  - Walk `::s/schema` for descriptions
-  - Walk `:returns` schema for descriptions
-  - Stringify `:examples` vector
-  - Stringify `:see-also` vector
-  - Stringify any other user-defined keys (non `::s/` namespaced)
-- [ ] Add unit tests for text extraction
+  - Walk `::s/schema` for Malli `:description` properties
+  - Recursively stringify all non-core keys (library metadata like `::phandaal/returns`, `::foo/examples`, etc.)
+  - Skip `::s/handler` (functions aren't searchable text)
+- [x] Add unit tests for text extraction
   - Minimal registration (just key + description)
-  - Full registration with all fields
-  - Custom user keys
+  - Registration with schema containing param descriptions
+  - Registration with arbitrary library-provided keys (verify they're searched)
 
 ## Phase 3: Update grep Function
 
 Modify `grep` to use the new extraction helper.
 
-- [ ] Replace current filtering logic:
+- [x] Replace current filtering logic:
   ```clojure
   ;; Before
   (or (re-find pattern-str (str (::s/key item)))
@@ -53,17 +51,16 @@ Modify `grep` to use the new extraction helper.
   ;; After
   (re-find pattern-str (registration->searchable-text item))
   ```
-- [ ] Add integration tests
-  - Search finds effect by param description
-  - Search finds effect by return schema description
-  - Search finds effect by example content
-  - Search finds effect by `:see-also` reference
+- [x] Add integration tests
+  - Search finds effect by param description in Malli schema
+  - Search finds effect by library-provided metadata (e.g., `::phandaal/returns`)
+  - Search finds effect by nested content in examples
   - Existing tests still pass (backward compat)
 
 ## Phase 4: Documentation
 
-- [ ] Update `grep` docstring to mention deep search capability
-- [ ] Add example in docstring showing param description match
+- [x] Update `grep` docstring to mention deep search capability
+- [x] Add example in docstring showing param description match
 - [ ] Update any relevant documentation
 
 ## Rollout Plan

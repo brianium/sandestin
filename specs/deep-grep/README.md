@@ -1,6 +1,6 @@
 ---
 title: "Deep Grep"
-status: planned
+status: completed
 date: 2026-01-30
 priority: 30
 ---
@@ -9,15 +9,13 @@ priority: 30
 
 ## Overview
 
-Extend the `grep` function to recursively search all discoverable metadata, not just the top-level `::s/description` and effect key. This enables conceptual search across parameter descriptions, return schemas, examples, and custom user metadata.
+Extend the `grep` function to recursively search all discoverable metadata, not just the top-level `::s/description` and effect key. This enables conceptual search across parameter descriptions and any library-provided metadata.
 
 ## Goals
 
 - Enable `grep` to find effects based on any metadata content
-- Search Malli schema `:description` properties
-- Search `:returns` schemas and their descriptions
-- Search `:examples` content
-- Search custom user-defined keys (`:see-also`, etc.)
+- Search Malli schema `:description` properties (parameter docs)
+- Search all non-core keys recursively (library-provided metadata)
 - Maintain backward compatibility with existing grep behavior
 
 ## Non-Goals
@@ -25,6 +23,7 @@ Extend the `grep` function to recursively search all discoverable metadata, not 
 - Full-text search with ranking/relevance scoring
 - Fuzzy matching or typo tolerance
 - Indexing or caching of searchable content
+- Knowledge of specific library keys (grep searches everything generically)
 
 ## Key Decisions
 
@@ -32,14 +31,15 @@ Summarize important decisions made during research. See [research.md](research.m
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Text extraction | Recursive walk | Simple, handles nested structures |
+| Text extraction | Recursive walk of all keys | Libraries add arbitrary namespaced keys; grep doesn't need to know about them |
 | Schema descriptions | Walk Malli properties | Standard Malli metadata location |
-| Performance | No caching | Registry is static per dispatch |
+| Performance | No caching | Dev tool, registry is static per dispatch, simple is better |
+| Library metadata | Search everything non-core | `::phandaal/returns`, `::foo/examples`, etc. automatically included |
 
 ## Implementation Status
 
 See [implementation-plan.md](implementation-plan.md) for detailed task breakdown.
 
-- [ ] Phase 1: Extract searchable text helper
-- [ ] Phase 2: Update grep to use deep extraction
-- [ ] Phase 3: Testing & documentation
+- [x] Phase 1: Extract searchable text helper
+- [x] Phase 2: Update grep to use deep extraction
+- [x] Phase 3: Testing & documentation

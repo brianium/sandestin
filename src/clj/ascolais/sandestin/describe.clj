@@ -3,12 +3,92 @@
 
    Provides functions to describe, sample, search, and inspect
    registered effects, actions, and placeholders."
-  (:require [malli.core :as m]
+  (:require [clojure.string :as str]
+            [malli.core :as m]
             [malli.generator :as mg]))
 
 ;; Alias for the public namespace to use for output keys
 (def ^:private s-ns "ascolais.sandestin")
 (defn- s-key [k] (keyword s-ns (name k)))
+
+;; =============================================================================
+;; Deep Text Extraction (for grep)
+;; =============================================================================
+
+(defn- walk-schema-descriptions
+  "Extract all :description values from a Malli schema.
+   Walks the schema recursively to find descriptions in:
+   - Schema properties (top-level)
+   - Map entry properties
+   - Tuple/vector element properties
+   - Union/intersection branch properties"
+  [schema]
+  (when schema
+    (let [descriptions (atom [])]
+      (letfn [(extract-props [props]
+                (when-let [desc (:description props)]
+                  (swap! descriptions conj desc)))
+              (walk [s]
+                (when s
+                  (cond
+                    ;; Malli schema as vector: [:type props? & children]
+                    (vector? s)
+                    (let [[type-kw & rest] s
+                          [props & children] (if (map? (first rest))
+                                               rest
+                                               (cons nil rest))]
+                      (extract-props props)
+                      ;; For :map schemas, entries are [key props? schema]
+                      (when (= :map type-kw)
+                        (doseq [entry children]
+                          (when (vector? entry)
+                            (let [[_k & entry-rest] entry
+                                  [entry-props entry-schema] (if (map? (first entry-rest))
+                                                               entry-rest
+                                                               (cons nil entry-rest))]
+                              (extract-props entry-props)
+                              (walk entry-schema)))))
+                      ;; For other schemas, recursively walk children
+                      (when-not (= :map type-kw)
+                        (doseq [child children]
+                          (walk child))))
+
+                    ;; Handle refs and other forms
+                    (keyword? s) nil
+                    :else nil)))]
+        (walk schema))
+      (str/join " " @descriptions))))
+
+(defn- stringify-value
+  "Recursively stringify a value for text search."
+  [v]
+  (cond
+    (string? v) v
+    (keyword? v) (str v)
+    (symbol? v) (str v)
+    (number? v) (str v)
+    (map? v) (str/join " " (mapcat (fn [[k v]] [(stringify-value k) (stringify-value v)]) v))
+    (sequential? v) (str/join " " (map stringify-value v))
+    (set? v) (str/join " " (map stringify-value v))
+    :else (str v)))
+
+(defn- registration->searchable-text
+  "Extract all searchable text from a registration description map.
+   Includes:
+   - The effect/action/placeholder key
+   - The ::s/description
+   - All :description values from the ::s/schema (Malli properties)
+   - All non-core keys recursively stringified (library metadata)"
+  [item]
+  (let [core-keys #{(s-key :key) (s-key :type) (s-key :description)
+                    (s-key :schema) (s-key :handler) (s-key :system-keys)}
+        key-text (str (get item (s-key :key)))
+        desc-text (str (get item (s-key :description)))
+        schema-text (walk-schema-descriptions (get item (s-key :schema)))
+        ;; All other keys (library metadata like ::phandaal/returns, ::foo/examples)
+        other-keys (remove #(core-keys %) (keys item))
+        other-text (str/join " " (map #(stringify-value (get item %)) other-keys))]
+    (str/join " " (remove str/blank? [key-text desc-text schema-text other-text]))))
 
 (defn- registration->description
   "Convert a registration entry to a description map."
@@ -112,19 +192,25 @@
 (defn grep
   "Search registered items by pattern.
 
-   (grep dispatch \"database\")       ;; search descriptions and keys
-   (grep dispatch #\"execute.*\")     ;; regex on keys and descriptions
+   Searches deeply across all discoverable metadata:
+   - Effect/action/placeholder keys
+   - Top-level descriptions
+   - Malli schema :description properties (parameter docs)
+   - All library-provided metadata (e.g., ::phandaal/returns, examples)
+
+   (grep dispatch \"database\")       ;; search all metadata
+   (grep dispatch #\"execute.*\")     ;; regex pattern
+   (grep dispatch \"threshold\")      ;; finds effects with 'threshold' in param descriptions
 
    Returns sequence of matching item descriptions."
   [dispatch pattern]
   (let [all-items (describe dispatch :all)
-        pattern-str (if (instance? java.util.regex.Pattern pattern)
-                      pattern
-                      (re-pattern (str "(?i)" (java.util.regex.Pattern/quote (str pattern)))))]
+        pattern-re (if (instance? java.util.regex.Pattern pattern)
+                     pattern
+                     (re-pattern (str "(?i)" (java.util.regex.Pattern/quote (str pattern)))))]
     (filter
      (fn [item]
-       (or (re-find pattern-str (str (get item (s-key :key))))
-           (re-find pattern-str (str (get item (s-key :description))))))
+       (re-find pattern-re (registration->searchable-text item)))
      all-items)))
 
 (defn schemas
