@@ -36,3 +36,8 @@ Thumbs.db
 .env
 .env.local
 .claude/settings.local.json
+
+# Specs docs UI (generated)
+specs/.nojekyll
+specs/_sidebar.md
+specs/index.html
