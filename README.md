@@ -180,7 +180,10 @@ Generate sample data using Malli generators:
 
 ### grep
 
-Search by pattern:
+Search all metadata by pattern. Grep performs a deep search across:
+- Effect/action/placeholder keys and descriptions
+- Malli schema `:description` properties (parameter documentation)
+- All library-provided metadata (e.g., `::phandaal/returns`, custom keys)
 
 ```clojure
 (s/grep dispatch "database")
@@ -188,6 +191,9 @@ Search by pattern:
 
 (s/grep dispatch #"log|save")
 ;; => items matching the regex
+
+;; Finds effects with "user" in parameter descriptions
+(s/grep dispatch "user")
 ```
 
 ### schemas
