@@ -19,7 +19,7 @@ Add to your `deps.edn`:
 
 ```clojure
 {:deps
- {io.github.brianium/sandestin {:git/tag "v0.5.0" :git/sha "526d4c5"}}}
+ {io.github.brianium/sandestin {:git/tag "v0.6.0" :git/sha "5888508"}}}
 ```
 
 ## Quick Start
